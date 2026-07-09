@@ -40,3 +40,12 @@ export interface SinglePlayerState {
   winner: 'player' | 'ai' | null;
   aiGuesses: Guess[]; // CPU's guesses against player
 }
+
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  timestamp: number;
+}
+

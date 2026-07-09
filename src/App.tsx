@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import Peer from "peerjs";
 import { Html5Qrcode } from "html5-qrcode";
@@ -29,6 +29,7 @@ import {
   ScratchpadState,
   SinglePlayerState,
   Player as RoomPlayer,
+  ChatMessage,
 } from "./types";
 import {
   hasUniqueDigits,
@@ -82,6 +83,10 @@ export default function App() {
   const [roomCodeInput, setRoomCodeInput] = useState<string>("");
   const [activeRoom, setActiveRoom] = useState<GameRoom | null>(null);
   const [onlineScratch, setOnlineScratch] = useState<ScratchpadState>(initialScratchpad());
+  const [isConnecting, setIsConnecting] = useState<boolean>(false);
+  const [rematchStatus, setRematchStatus] = useState<"none" | "offered" | "received">("none");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState<string>("");
 
   // Single Player (vs AI) State
   const [singlePlayer, setSinglePlayer] = useState<SinglePlayerState | null>(null);
@@ -127,8 +132,53 @@ export default function App() {
   }, []);
 
   const handleUpdatePlayerName = (name: string) => {
-    setPlayerName(name);
-    localStorage.setItem("doi_player_name", name);
+    const trimmedName = name.trim().slice(0, 16) || "Guesser";
+    setPlayerName(trimmedName);
+    localStorage.setItem("doi_player_name", trimmedName);
+
+    if (connRef.current) {
+      try {
+        connRef.current.send({
+          type: "UPDATE_NAME",
+          playerId,
+          playerName: trimmedName,
+        });
+      } catch (e) {
+        console.error("Failed to broadcast name update:", e);
+      }
+    }
+    // Update locally as well
+    setActiveRoom((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        players: prev.players.map((p) => (p.id === playerId ? { ...p, name: trimmedName } : p)),
+      };
+    });
+  };
+
+  const handleSendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !connRef.current) return;
+
+    const newMsg: ChatMessage = {
+      id: "msg_" + Math.random().toString(36).substring(2, 11),
+      senderId: playerId,
+      senderName: playerName,
+      text: chatInput.trim(),
+      timestamp: Date.now(),
+    };
+
+    setChatMessages((prev) => [...prev, newMsg]);
+    try {
+      connRef.current.send({
+        type: "CHAT",
+        message: newMsg,
+      });
+    } catch (e) {
+      console.error("Failed to send chat message:", e);
+    }
+    setChatInput("");
   };
 
   // --- ONLINE MULTIPLAYER ACTIONS ---
@@ -213,6 +263,7 @@ export default function App() {
   const setupConnectionListeners = (conn: any, hostRole: boolean, code: string) => {
     conn.on("open", () => {
       setError(null);
+      setIsConnecting(false);
       if (!hostRole) {
         // Guest sends JOIN message once connection is open
         conn.send({
@@ -224,16 +275,19 @@ export default function App() {
     });
 
     conn.on("data", (data: any) => {
+      setIsConnecting(false);
       handleIncomingData(data, hostRole, code);
     });
 
     conn.on("close", () => {
-      setError("Opponent disconnected. Signal lost.");
+      setIsConnecting(false);
+      setError("Opponent disconnected.");
       handleOnlineLeave();
     });
 
     conn.on("error", (err: any) => {
-      setError(`Signal transmission error: ${err.message || "Unknown"}`);
+      setIsConnecting(false);
+      setError(`Signal error: ${err.message || "Unknown"}`);
       handleOnlineLeave();
     });
   };
@@ -373,8 +427,45 @@ export default function App() {
         // If dead is 4, game ended (opponent wins)
         const gameEnded = score.dead === 4;
 
+        // Check if we already processed this guess (de-duplicate)
+        let alreadyProcessed = false;
+        if (activeRoom) {
+          alreadyProcessed = activeRoom.guesses.some(
+            (g) => g.code === opponentGuessCode && g.playerId === data.playerId
+          );
+        }
+
+        if (alreadyProcessed) {
+          // Send back the response anyway so the sender transitions their turn and doesn't get stuck
+          if (!gameEnded) {
+            setTimeout(() => {
+              connRef.current?.send({
+                type: "GUESS_RESULT",
+                guess: newGuess,
+                nextTurn: playerId,
+              });
+            }, 100);
+          } else {
+            setTimeout(() => {
+              connRef.current?.send({
+                type: "GAME_OVER",
+                winnerId: data.playerId,
+                opponentSecret: mySecretCode,
+                guess: newGuess,
+              });
+            }, 100);
+          }
+          break;
+        }
+
         setActiveRoom((prevRoom) => {
           if (!prevRoom) return null;
+
+          // Double check in state
+          const exists = prevRoom.guesses.some(
+            (g) => g.code === opponentGuessCode && g.playerId === data.playerId
+          );
+          if (exists) return prevRoom;
 
           const updatedGuesses = [...prevRoom.guesses, newGuess];
           let newStatus = prevRoom.status;
@@ -425,9 +516,15 @@ export default function App() {
         // We guessed and got the results back from opponent
         setActiveRoom((prevRoom) => {
           if (!prevRoom) return null;
+
+          // Deduplicate
+          const exists = prevRoom.guesses.some(
+            (g) => g.code === data.guess.code && g.playerId === data.guess.playerId
+          );
+
           return {
             ...prevRoom,
-            guesses: [...prevRoom.guesses, data.guess],
+            guesses: exists ? prevRoom.guesses : [...prevRoom.guesses, data.guess],
             turn: data.nextTurn,
             updatedAt: Date.now(),
           };
@@ -448,10 +545,16 @@ export default function App() {
             return p;
           });
 
+          // Deduplicate
+          const exists = prevRoom.guesses.some(
+            (g) => g.code === data.guess.code && g.playerId === data.guess.playerId
+          );
+          const updatedGuesses = exists ? prevRoom.guesses : [...prevRoom.guesses, data.guess];
+
           return {
             ...prevRoom,
             players: updatedPlayers,
-            guesses: [...prevRoom.guesses, data.guess],
+            guesses: updatedGuesses,
             status: "ended",
             winnerId: data.winnerId,
             turn: null,
@@ -461,8 +564,31 @@ export default function App() {
         break;
       }
 
-      case "REMATCH": {
-        // Opponent wants a rematch, reset everything
+      case "UPDATE_NAME": {
+        setActiveRoom((prevRoom) => {
+          if (!prevRoom) return null;
+          return {
+            ...prevRoom,
+            players: prevRoom.players.map((p) =>
+              p.id === data.playerId ? { ...p, name: data.playerName } : p
+            ),
+          };
+        });
+        break;
+      }
+
+      case "CHAT": {
+        setChatMessages((prev) => [...prev, data.message]);
+        break;
+      }
+
+      case "REMATCH_OFFER": {
+        setRematchStatus("received");
+        break;
+      }
+
+      case "REMATCH_ACCEPT": {
+        setRematchStatus("none");
         setActiveRoom((prevRoom) => {
           if (!prevRoom) return null;
           
@@ -482,6 +608,7 @@ export default function App() {
           };
         });
         setOnlineScratch(initialScratchpad());
+        setChatMessages([]);
         setDraftCode("");
         break;
       }
@@ -494,6 +621,7 @@ export default function App() {
   const handleCreateOnlineRoom = () => {
     try {
       setError(null);
+      setIsConnecting(true);
       
       // Clean up any existing connection
       cleanupPeerConnection();
@@ -511,6 +639,7 @@ export default function App() {
       setIsHost(true);
 
       peer.on("open", () => {
+        setIsConnecting(false);
         const initialRoom: GameRoom = {
           roomId: code,
           players: [{ id: playerId, name: playerName.trim().slice(0, 16), secretCode: null }],
@@ -536,12 +665,14 @@ export default function App() {
           // If ID taken, retry
           handleCreateOnlineRoom();
         } else {
+          setIsConnecting(false);
           setError(`Network establishment failed: ${err.message || err.type}`);
           cleanupPeerConnection();
         }
       });
 
     } catch (err: any) {
+      setIsConnecting(false);
       setError(err.message);
     }
   };
@@ -591,6 +722,7 @@ export default function App() {
 
     try {
       setError(null);
+      setIsConnecting(true);
       cleanupPeerConnection();
 
       // Create peer with a random client ID to connect to host
@@ -623,11 +755,13 @@ export default function App() {
 
       peer.on("error", (err: any) => {
         console.error("Peer join error:", err);
+        setIsConnecting(false);
         setError(`Failed to connect to room ${code}. Make sure code is correct.`);
         cleanupPeerConnection();
       });
 
     } catch (err: any) {
+      setIsConnecting(false);
       setError(err.message);
     }
   };
@@ -707,41 +841,68 @@ export default function App() {
       code: draftCode,
     });
 
+    // Immediately set turn to null to prevent duplicate clicks during network lag
+    setActiveRoom((prevRoom) => {
+      if (!prevRoom) return null;
+      return {
+        ...prevRoom,
+        turn: null,
+        updatedAt: Date.now(),
+      };
+    });
+
     setDraftCode("");
     setError(null);
   };
 
   const handleOnlineRematch = () => {
-    if (!activeRoom) return;
+    if (!activeRoom || !connRef.current) return;
 
-    // Send REMATCH signal to opponent
-    connRef.current?.send({
-      type: "REMATCH",
-    });
-
-    // Reset locally
-    setActiveRoom((prevRoom) => {
-      if (!prevRoom) return null;
+    if (rematchStatus === "received") {
+      // We accept the rematch
+      try {
+        connRef.current.send({
+          type: "REMATCH_ACCEPT",
+        });
+      } catch (e) {
+        console.error("Failed to transmit rematch acceptance:", e);
+      }
       
-      const resetPlayers = prevRoom.players.map((p) => ({
-        ...p,
-        secretCode: null,
-      }));
+      setRematchStatus("none");
+      setActiveRoom((prevRoom) => {
+        if (!prevRoom) return null;
+        
+        const resetPlayers = prevRoom.players.map((p) => ({
+          ...p,
+          secretCode: null,
+        }));
 
-      return {
-        ...prevRoom,
-        guesses: [],
-        status: "setup",
-        turn: null,
-        winnerId: null,
-        players: resetPlayers,
-        updatedAt: Date.now(),
-      };
-    });
+        return {
+          ...prevRoom,
+          guesses: [],
+          status: "setup",
+          turn: null,
+          winnerId: null,
+          players: resetPlayers,
+          updatedAt: Date.now(),
+        };
+      });
 
-    setOnlineScratch(initialScratchpad());
-    setDraftCode("");
-    setError(null);
+      setOnlineScratch(initialScratchpad());
+      setChatMessages([]);
+      setDraftCode("");
+      setError(null);
+    } else {
+      // Offer rematch
+      setRematchStatus("offered");
+      try {
+        connRef.current.send({
+          type: "REMATCH_OFFER",
+        });
+      } catch (e) {
+        console.error("Failed to send rematch offer:", e);
+      }
+    }
   };
 
   const handleOnlineLeave = () => {
@@ -749,6 +910,10 @@ export default function App() {
     setActiveRoom(null);
     setGameMode("home");
     setDraftCode("");
+    setIsConnecting(false);
+    setRematchStatus("none");
+    setChatMessages([]);
+    setChatInput("");
   };
 
   // --- SINGLE PLAYER (VS AI) ACTIONS ---
@@ -1016,12 +1181,12 @@ export default function App() {
                 }}
               />
               <h2 className="text-md font-mono font-bold uppercase tracking-wider text-slate-300">
-                TACTICAL ONLINE DUEL
+                ONLINE MULTIPLAYER
               </h2>
             </div>
 
             <p className="text-xs text-slate-400 font-mono uppercase tracking-tight mb-6">
-              Establish a secure code-breaker room or coordinate join protocol.
+              Create a co-op room to invite a friend, or enter their room code below.
             </p>
 
             <div className="space-y-4">
@@ -1197,7 +1362,7 @@ export default function App() {
           {activeRoom.status === "setup" && (
             <div className="col-span-12 flex flex-col items-center justify-center py-10">
               <div className="w-full max-w-md">
-                {activeRoom.players.find((p) => p.id === playerId)?.hasSubmittedCode ? (
+                {activeRoom.players.find((p) => p.id === playerId)?.secretCode !== null ? (
                   <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
@@ -1205,10 +1370,10 @@ export default function App() {
                   >
                     <Lock className="w-12 h-12 text-emerald-400 mx-auto animate-pulse mb-4" />
                     <h3 className="font-display font-bold text-lg text-slate-100 uppercase tracking-wide">
-                      Your code is secure
+                      Code Locked!
                     </h3>
-                    <p className="text-xs text-slate-400 font-mono mt-2 uppercase tracking-normal leading-relaxed">
-                      LOCKED AND ENCRYPTED. Awaiting opponent code authorization protocol.
+                    <p className="text-sm text-slate-400 font-mono mt-2 tracking-normal leading-relaxed">
+                      Your code is secure. Waiting for your opponent to lock in their code...
                     </p>
                   </motion.div>
                 ) : (
@@ -1216,8 +1381,8 @@ export default function App() {
                     value={draftCode}
                     onChange={setDraftCode}
                     onSubmit={handleOnlineSetupLock}
-                    title="SET YOUR SECRET 4-DIGIT UNIQUE CODE"
-                    submitLabel="LOCK CODE IN SAFE"
+                    title="Set your secret 4-digit code (no duplicates)"
+                    submitLabel="Lock Code"
                   />
                 )}
               </div>
@@ -1247,17 +1412,69 @@ export default function App() {
                   onSubmit={handleOnlineGuessSubmit}
                   disabled={activeRoom.turn !== playerId}
                   title={
-                    activeRoom.turn === playerId
-                      ? "YOUR TURN: ENTER 4-DIGIT CODE TO GUESS"
-                      : "OPPONENT'S TURN: ANALYZING COMBINATIONS"
+                    activeRoom.turn === playerId ? (
+                      <span className="text-emerald-400 font-extrabold flex items-center gap-1.5 animate-pulse">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                        YOUR TURN: GUESS THEIR CODE!
+                      </span>
+                    ) : (
+                      <span className="text-amber-500 font-semibold flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                        OPPONENT'S TURN: THINKING...
+                      </span>
+                    )
                   }
-                  submitLabel="TRANSMIT GUESS CODE"
+                  submitLabel="Lock In Guess"
                 />
               </div>
 
-              {/* Right Column: Scratchpad (Sticky) */}
+              {/* Right Column: Scratchpad and Chat */}
               <div className="col-span-12 md:col-span-5 flex flex-col gap-4">
                 <Scratchpad state={onlineScratch} onChange={setOnlineScratch} />
+
+                {/* Match Chat System (deleted after game) */}
+                <div className="bg-slate-900/40 border border-slate-900 rounded-xl p-4 flex flex-col h-[280px]">
+                  <h4 className="text-[10px] font-mono font-bold tracking-widest text-emerald-400 uppercase mb-2 flex items-center justify-between">
+                    <span>Match Chat</span>
+                    <span className="text-slate-600 text-[9px]">P2P • SESSION ONLY</span>
+                  </h4>
+                  
+                  {/* Message list */}
+                  <div className="flex-1 overflow-y-auto space-y-2 mb-2 pr-1 font-mono text-xs">
+                    {chatMessages.length === 0 ? (
+                      <p className="text-slate-600 italic text-center py-6 text-[11px]">
+                        No messages yet. Say hi to your opponent!
+                      </p>
+                    ) : (
+                      chatMessages.map((m) => (
+                        <div key={m.id} className="leading-tight break-all">
+                          <span className={m.senderId === playerId ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
+                            {m.senderName}:{" "}
+                          </span>
+                          <span className="text-slate-300">{m.text}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  
+                  {/* Chat input form */}
+                  <form onSubmit={handleSendChat} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="Type a message..."
+                      maxLength={100}
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 font-mono text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="submit"
+                      className="px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold rounded-lg border border-slate-700 uppercase cursor-pointer"
+                    >
+                      Send
+                    </button>
+                  </form>
+                </div>
               </div>
             </>
           )}
@@ -1272,26 +1489,26 @@ export default function App() {
               >
                 {activeRoom.winnerId === playerId ? (
                   <div className="mb-4">
-                    <div className="w-14 h-14 bg-emerald-950/60 border-2 border-emerald-500 rounded-full flex items-center justify-center mx-auto text-emerald-400 mb-3 shadow-[0_0_15px_rgba(16,185,129,0.3)] animate-bounce">
-                      🏆
+                    <div className="w-14 h-14 bg-emerald-950/60 border-2 border-emerald-500 rounded-full flex items-center justify-center mx-auto text-emerald-400 mb-3 shadow-[0_0_15px_rgba(16,185,129,0.3)] animate-bounce text-xl flex items-center justify-center">
+                      🎉
                     </div>
                     <h2 className="text-2xl font-display font-bold text-emerald-400 uppercase tracking-tight">
-                      TACTICAL VICTORY
+                      You Cracked It!
                     </h2>
-                    <p className="text-xs text-slate-400 font-mono mt-1 uppercase tracking-widest">
-                      Enemy lock completely deciphered!
+                    <p className="text-xs text-slate-400 mt-1 uppercase tracking-wider">
+                      You guessed their secret combination first! Awesome job.
                     </p>
                   </div>
                 ) : (
                   <div className="mb-4">
-                    <div className="w-14 h-14 bg-red-950/60 border-2 border-red-500 rounded-full flex items-center justify-center mx-auto text-red-500 mb-3 shadow-[0_0_15px_rgba(239,68,68,0.3)] animate-pulse">
-                      ☠
+                    <div className="w-14 h-14 bg-red-950/60 border-2 border-red-500 rounded-full flex items-center justify-center mx-auto text-red-500 mb-3 shadow-[0_0_15px_rgba(239,68,68,0.3)] animate-pulse text-xl flex items-center justify-center">
+                      😅
                     </div>
                     <h2 className="text-2xl font-display font-bold text-red-400 uppercase tracking-tight">
-                      SYSTEM DEFEAT
+                      A Close Match!
                     </h2>
-                    <p className="text-xs text-slate-400 font-mono mt-1 uppercase tracking-widest">
-                      Enemy cracked your lock first!
+                    <p className="text-xs text-slate-400 mt-1 uppercase tracking-wider">
+                      They managed to crack your code first this time.
                     </p>
                   </div>
                 )}
@@ -1320,9 +1537,22 @@ export default function App() {
                 <div className="space-y-3">
                   <button
                     onClick={handleOnlineRematch}
-                    className="w-full h-11 bg-emerald-500 text-slate-950 hover:bg-emerald-400 border border-emerald-500 rounded-xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer active:scale-95 transition-all"
+                    disabled={rematchStatus === "offered"}
+                    className={`w-full h-11 rounded-xl font-mono text-xs font-bold uppercase tracking-wider cursor-pointer active:scale-95 transition-all flex items-center justify-center gap-2 ${
+                      rematchStatus === "offered"
+                        ? "bg-slate-800 border border-slate-700 text-slate-500 cursor-not-allowed"
+                        : rematchStatus === "received"
+                        ? "bg-amber-500 hover:bg-amber-400 text-slate-950 border border-amber-500 animate-pulse"
+                        : "bg-emerald-500 text-slate-950 hover:bg-emerald-400 border border-emerald-500"
+                    }`}
                   >
-                    INITIATE REMATCH
+                    {rematchStatus === "offered" ? (
+                      <span>Waiting for opponent...</span>
+                    ) : rematchStatus === "received" ? (
+                      <span>Accept Rematch!</span>
+                    ) : (
+                      <span>Request Rematch</span>
+                    )}
                   </button>
                   <button
                     onClick={handleOnlineLeave}
@@ -1443,10 +1673,10 @@ export default function App() {
                       🏆
                     </div>
                     <h2 className="text-2xl font-display font-bold text-emerald-400 uppercase tracking-tight">
-                      TACTICAL VICTORY
+                      VICTORY
                     </h2>
                     <p className="text-xs text-slate-400 font-mono mt-1 uppercase tracking-widest">
-                      AI security completely decimated!
+                      You cracked the AI's secret code!
                     </p>
                   </div>
                 ) : (
@@ -1659,7 +1889,7 @@ export default function App() {
                         🏆
                       </div>
                       <h2 className="text-2xl font-display font-bold text-emerald-400 uppercase tracking-tight">
-                        TACTICAL VICTORY
+                        VICTORY
                       </h2>
                       <p className="text-xs text-slate-400 font-mono mt-1 uppercase tracking-widest">
                         {localState.winner === "p1" ? localState.p1Name : localState.p2Name} is the Master Codebreaker!
@@ -1734,47 +1964,46 @@ export default function App() {
               <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-800">
                 <HelpCircle className="w-5 h-5 text-emerald-400 animate-pulse" />
                 <h3 className="text-md font-mono font-bold uppercase text-slate-200">
-                  DECODE SYSTEM MANUAL
+                  How to Play
                 </h3>
               </div>
 
               <div className="font-mono text-xs text-slate-400 space-y-4 max-h-[70vh] overflow-y-auto pr-1">
                 <div>
                   <h4 className="text-emerald-400 font-bold uppercase mb-1">
-                    Phase 1: The Secret Lock
+                    Step 1: Set Your Code
                   </h4>
                   <p className="leading-relaxed">
-                    Both you and your opponent secretly choose a 4-digit combination. Every digit
-                    must be completely unique. No repeats. (e.g. <span className="text-emerald-400">5724</span> is legal, <span className="text-red-500">5524</span> is illegal due to repeating 5s).
+                    You and your opponent both secretly choose a 4-digit combination. Every digit
+                    must be completely unique. No repeats! (e.g., <span className="text-emerald-400">5724</span> is perfect, <span className="text-red-500">5524</span> won't work because of the duplicate 5s).
                   </p>
                 </div>
 
                 <div>
                   <h4 className="text-emerald-400 font-bold uppercase mb-1">
-                    Phase 2: Turns and Strikes
+                    Step 2: Take turns guessing
                   </h4>
                   <p className="leading-relaxed">
-                    Take turns guessing each other's combination. For every guess, the system
-                    returns two metrics:
+                    Take turns trying to guess each other's secret code. For every guess you make, you will get back some clues:
                   </p>
                   <ul className="list-disc pl-5 mt-2 space-y-1">
                     <li>
-                      <span className="text-emerald-400 font-bold">DEAD:</span> Digit exists in the
-                      code and is in the <span className="text-emerald-300">correct position</span>.
+                      <span className="text-emerald-400 font-bold">🟢 DEAD:</span> A digit exists in the
+                      code and is in the <span className="text-emerald-300">exact correct spot</span>.
                     </li>
                     <li>
-                      <span className="text-amber-400 font-bold">INJURED:</span> Digit exists in the
-                      code, but is in the <span className="text-amber-300">incorrect position</span>.
+                      <span className="text-amber-400 font-bold">🟡 INJURED:</span> A digit exists in the
+                      code, but is placed in the <span className="text-amber-300">wrong spot</span>.
                     </li>
                   </ul>
                 </div>
 
                 <div className="p-3 bg-slate-950 border border-slate-900 rounded-lg">
                   <h5 className="font-bold uppercase text-[10px] text-slate-500 mb-1">
-                    Real Match Example:
+                    A quick example:
                   </h5>
                   <p className="leading-normal">
-                    Opponent Code: <span className="text-slate-200">5724</span>
+                    Opponent's Code: <span className="text-slate-200">5724</span>
                     <br />
                     Your Guess Code: <span className="text-slate-200">5279</span>
                   </p>
@@ -1783,27 +2012,27 @@ export default function App() {
                     <li>2 is in the code but wrong position → <span className="text-amber-400">1 INJURED</span></li>
                     <li>7 is in the code but wrong position → <span className="text-amber-400">1 INJURED</span></li>
                     <li>9 is not in the code → Nothing</li>
-                    <li>Feedback score: <span className="text-emerald-400">1 Dead, 2 Injured</span></li>
+                    <li>Your clue feedback: <span className="text-emerald-400">1 Dead, 2 Injured</span></li>
                   </ul>
                 </div>
 
                 <div>
                   <h4 className="text-emerald-400 font-bold uppercase mb-1">
-                    Phase 3: The Deduction
+                    Step 3: Keep notes
                   </h4>
                   <p className="leading-relaxed">
-                    Use the <span className="text-emerald-400">Tactical Scratchpad</span> to mark off
-                    digits you've eliminated (red Trash), digits you are certain exist (green
+                    Use the <span className="text-emerald-400">Scratchpad</span> to mark off
+                    digits you've ruled out (red Trash), digits you are certain exist (green
                     Confirm), or suspects (yellow Maybe) to narrow down possibilities.
                   </p>
                 </div>
 
                 <div>
                   <h4 className="text-emerald-400 font-bold uppercase mb-1">
-                    Phase 4: Endgame victory
+                    Step 4: Crack the code!
                   </h4>
                   <p className="leading-relaxed">
-                    The first codebreaker to decode all 4 digits in their exact correct positions (
+                    The first player to decode all 4 digits in their exact correct positions (
                     <span className="text-emerald-400">4 DEAD</span>) wins the game!
                   </p>
                 </div>
@@ -1813,8 +2042,54 @@ export default function App() {
                 onClick={() => setShowInstructions(false)}
                 className="w-full h-11 mt-6 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-xs font-bold uppercase rounded-xl cursor-pointer"
               >
-                ENGAGE DECIPHER PROTOCOLS
+                Let's play!
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* IS CONNECTING LOADER SCREEN WITH SVG */}
+      <AnimatePresence>
+        {isConnecting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex flex-col items-center justify-center z-50 p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="bg-slate-900 border border-slate-800 p-8 rounded-2xl max-w-xs w-full text-center shadow-2xl flex flex-col items-center"
+            >
+              <svg
+                className="animate-spin h-10 w-10 text-emerald-400 mb-4"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                ></circle>
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+              </svg>
+              <h3 className="font-mono text-sm font-bold text-slate-200 uppercase tracking-widest">
+                Establishing Link...
+              </h3>
+              <p className="font-mono text-[10px] text-slate-500 uppercase mt-2">
+                Connecting to codebreaker coordinates
+              </p>
             </motion.div>
           </motion.div>
         )}

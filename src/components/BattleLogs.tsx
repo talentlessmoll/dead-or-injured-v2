@@ -142,7 +142,7 @@ export default function BattleLogs({
           <div className="flex flex-col justify-center items-center h-full border border-dashed border-slate-900 rounded-xl p-6 bg-slate-950/20 text-center">
             <Terminal className="w-6 h-6 text-slate-800 mb-2" />
             <p className="text-xs font-mono text-slate-600 uppercase tracking-widest">
-              Awaiting tactical threat connection
+              Awaiting opponent connection
             </p>
           </div>
         )}

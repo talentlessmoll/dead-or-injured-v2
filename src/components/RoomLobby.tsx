@@ -129,7 +129,7 @@ export default function RoomLobby({ room, playerId, onLeave }: RoomLobbyProps) {
                   <span className="font-mono text-sm font-medium text-slate-200">{p.name}</span>
                 </div>
                 <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
-                  {p.id === playerId ? "CREATOR (YOU)" : "TACTICAL THREAT"}
+                  {p.id === playerId ? "CREATOR (YOU)" : "OPPONENT"}
                 </span>
               </div>
             ))}
@@ -139,7 +139,7 @@ export default function RoomLobby({ room, playerId, onLeave }: RoomLobbyProps) {
                 <div className="flex items-center gap-3">
                   <RefreshCw className="w-3.5 h-3.5 text-amber-500 animate-spin" />
                   <span className="font-mono text-xs text-slate-600 uppercase tracking-wider">
-                    AWAITING TARGET COORDINATES...
+                    AWAITING OPPONENT...
                   </span>
                 </div>
               </div>

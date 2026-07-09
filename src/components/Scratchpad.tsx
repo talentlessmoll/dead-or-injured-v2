@@ -63,7 +63,7 @@ export default function Scratchpad({ state, onChange }: ScratchpadProps) {
     <div className="w-full bg-slate-950/40 border border-slate-900 rounded-xl p-4">
       <div className="flex items-center justify-between mb-3 border-b border-slate-900 pb-2">
         <h3 className="text-xs font-mono font-bold tracking-wider text-slate-400 flex items-center gap-1.5 uppercase">
-          <FileText className="w-3.5 h-3.5 text-emerald-400" /> TACTICAL SCRATCHPAD
+          <FileText className="w-3.5 h-3.5 text-emerald-400" /> SCRATCHPAD
         </h3>
         <button
           onClick={resetScratchpad}
@@ -111,7 +111,7 @@ export default function Scratchpad({ state, onChange }: ScratchpadProps) {
         <textarea
           value={state.notes}
           onChange={(e) => onChange({ ...state, notes: e.target.value })}
-          placeholder="Deduction logs, candidate combinations, or coordinate details..."
+          placeholder="Write notes here, candidate codes, possible guesses..."
           className="w-full h-16 bg-slate-950/60 border border-slate-900 rounded-lg p-2 text-xs text-slate-300 font-mono placeholder:text-slate-700 focus:outline-none focus:border-slate-700 resize-none"
         />
       </div>

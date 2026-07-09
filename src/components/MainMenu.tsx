@@ -42,7 +42,7 @@ export default function MainMenu({
           DEAD OR <span className="text-emerald-400 font-mono">INJURED</span>
         </h1>
         <p className="text-slate-400 mt-2 text-sm tracking-wide font-mono uppercase">
-          Tactical Code-Breaking Protocol
+          Code-Breaking Logic Game
         </p>
       </motion.div>
 
@@ -59,7 +59,7 @@ export default function MainMenu({
               <User className="w-5 h-5" />
             </div>
             <div>
-              <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Tactical Call-Sign</p>
+              <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Call-Sign</p>
               {isEditingName ? (
                 <form onSubmit={handleSubmitName} className="flex items-center gap-2 mt-1">
                   <input
@@ -150,7 +150,7 @@ export default function MainMenu({
             </div>
             <div>
               <h3 className="text-lg font-display font-bold text-slate-100 group-hover:text-amber-400 transition-colors">
-                TACTICAL PRACTICE
+                VS AI PRACTICE
               </h3>
               <p className="text-xs text-slate-400 mt-1 mr-4">
                 Hone your code-breaking skills offline against a smart deduction algorithm.

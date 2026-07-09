@@ -1,71 +1,53 @@
-# 🎯 Dead or Injured — Tactical Code-Breaking Duel
+# 🎯 Dead or Injured: A Tactical Guessing Game
 
-Dead or Injured is a highly polished, interactive, full-stack multiplayer browser game of logic and deduction based on the classic *Bulls and Cows* code-breaking game (similar to Mastermind). Players compete to crack each other's secret 4-digit codes using dead/injured scoring, and keep notes on an interactive strategic scratchpad.
-
----
-
-## 🕹️ Game Rules & Scoring
-
-Both players lock in a secret **4-digit code** consisting of unique (non-repeating) numbers from `0` to `9`. Each turn, players submit a 4-digit guess and receive immediate feedback:
-
-- 🟢 **Dead**: A digit is correct and occupies the **exact correct position**.
-- 🟡 **Injured**: A digit is correct but is in the **wrong position**.
-
-### Example Scenario
-- **Target Secret Code**: `1` `3` `8` `0`
-- **Player's Guess**: `1` `8` `0` `5`
-- **Result**: `1 Dead` (the digit `1` is correct and in position 1), `2 Injured` (the digits `8` and `0` are in the target, but placed incorrectly).
-- **Goal**: Break the opponent's code (achieve `4 Dead`) in the fewest turns possible.
+Dead or Injured is a minimalist, fast-paced code-breaking game played with a friend or against a smart AI. It runs entirely serverless and peer-to-peer via **WebRTC (PeerJS)**, meaning two players can pair up directly using simple room codes or dynamic QR code links! No login, database, or server registration is needed.
 
 ---
 
-## 🚀 Key Features
+## 🚀 How Peer-to-Peer Connections Work
 
-- **🌐 Zero-Backend WebRTC Multiplayer (PeerJS)**: Players can play together over any internet connection without needing cloud workers, databases, or traditional server coordination. Fully serverless peer-to-peer multiplayer!
-- **📸 QR Scanner & Shareable Links**: Seamlessly invite friends to a match by clicking **Share Link**, copying the game coordinates, or presenting/scanning a dynamic **QR Code** generated on-the-fly using the device's camera.
-- **🤖 Adaptive AI Opponent (Single Player)**: Play offline against a tactical computer opponent. The AI dynamically logs, analyzes possibilities, and adapts its guesses with increasing intelligence.
-- **📱 Local Pass & Play**: Share a single device and engage in a head-to-head match, completed with a transition screen overlay to keep your code private during handovers.
-- **📝 Interactive Tactile Scratchpad**: Keep track of safe, eliminated, and potential positions for every digit (`0`-`9`) on an elegant visual matrix.
-- **📺 Tactical Terminal UI**: Styled in a slate-colored dark cosmetic layout with high-contrast emerald colors, clean typographic scales, smooth entry transitions, and tactile audio feedback.
+1. **Host a Room**: One player clicks **"Create Co-op Lobby"** to receive a 4-character room access code (e.g. `KXYZ`) and a custom QR code.
+2. **Join a Room**: The second player enters the 4-character room code, clicks the custom **"Scan Invite QR Code"** button to scan, or simply opens the dynamic match link.
+3. **No Central Server**: PeerJS brokers the initial handshake, and the rest of the game runs 100% peer-to-peer directly between your browsers. Chats and game states stay client-side and are wiped cleanly when you leave the game.
 
 ---
 
-## 🛠️ Architecture & Core Technologies
+## 🎮 Game Rules
 
-- **Frontend**: React 18, Vite, TypeScript
-- **Styling & Theme**: Tailwind CSS, custom tactile glows, and `lucide-react` icons
-- **Animations**: `motion/react` (Framer Motion)
-- **Peer-to-Peer Signaling**: **PeerJS (WebRTC)** for direct serverless browser-to-browser socket data transfers.
-- **QR Code Engine**: `qrcode` (local generation) & `html5-qrcode` (camera viewport capturing).
+### Phase 1: Set Your Code
+* You and your opponent secretly choose a 4-digit code.
+* **The Golden Rule**: Every digit must be completely unique. No repeating numbers allowed!
+  * ✅ `5724` is legal.
+  * ❌ `5524` is illegal (the 5 repeats).
+  * ✅ `0123` is legal (0 can go first).
+
+### Phase 2: Take Turns Guessing
+* You and your opponent take turns trying to crack each other's secret code.
+* Every guess you make returns two clues:
+  * **🟢 DEAD**: A digit exists in the code and is in the **exact correct position**.
+  * **🟡 INJURED**: A digit exists in the code, but is in the **wrong position**.
+
+### Real Match Example:
+* **Opponent's secret code**: `5724`
+* **Your guess code**: `5279`
+* **Result clues**: `1 Dead, 2 Injured`
+  * *5* is in the 1st position → **1 DEAD**
+  * *2* is in the code but wrong position → **1 INJURED**
+  * *7* is in the code but wrong position → **1 INJURED**
+  * *9* is not in the code at all → **Nothing**
+
+### Phase 3: Narrow It Down
+* Use the **Tactical Scratchpad** on the screen to cross off digits you know are out (red Trash), lock in confirmed digits (green Confirm), or keep track of potential suspects (yellow Maybe).
+
+### Phase 4: Victory
+* The first player to successfully get **4 DEAD** (meaning they have guessed all 4 digits in their exact correct order) wins the game!
 
 ---
 
-## 💻 Developer Setup & Installation
+## 🛠️ Built With
 
-Follow these steps to run the project locally:
-
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Start the Development Server
-```bash
-npm run dev
-```
-The server binds to port `3000` automatically. Open `http://localhost:3000` in your browser.
-
-### 3. Verify and Build the Applet
-To build the static production files:
-```bash
-npm run build
-```
-
----
-
-## 🔍 How Serverless Multiplayer Works
-1. **The Host** generates a clean 4-character room code (e.g. `KXYZ`). This instantiates a PeerJS server ID under `doi-KXYZ`.
-2. **The Guest** scans the host's QR code or pastes the share link (`/?room=KXYZ`). The client reads the code, connects directly to `doi-KXYZ`, and launches an encrypted WebRTC data channel connection.
-3. **No Database Needed**: Game actions, secret code lock confirmations, and guesses are exchanged safely directly between the two peer browsers.
-
-Enjoy code-breaking! 🕵️‍♂️
+* **React + Vite** for rapid, modern frontend rendering.
+* **Tailwind CSS** for tactile, high-contrast visual styling.
+* **motion/react** for smooth, playful screen transitions and keypad animations.
+* **PeerJS (WebRTC)** for smooth, peer-to-peer multiplayer state synchronization.
+* **Html5-Qrcode** for camera QR scanning and instant matchmaking.

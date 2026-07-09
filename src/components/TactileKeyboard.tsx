@@ -1,10 +1,11 @@
+import React from "react";
 import { X, Delete, Check } from "lucide-react";
 
 interface TactileKeyboardProps {
   value: string;
   onChange: (val: string) => void;
   onSubmit: () => void;
-  title?: string;
+  title?: React.ReactNode;
   submitLabel?: string;
   disabled?: boolean;
 }
