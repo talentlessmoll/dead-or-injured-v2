@@ -1,0 +1,6 @@
+{
+  "name": "Dead or Injured",
+  "description": "A tactical multiplayer code-breaking browser game where players guess each other's secret 4-digit codes using dead/injured scoring and an interactive scratchpad.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
