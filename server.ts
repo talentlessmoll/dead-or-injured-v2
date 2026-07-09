@@ -60,6 +60,91 @@ async function startServer() {
   }, 15 * 60 * 1000); // Run every 15 mins
 
   // --- API Routes ---
+  
+  // WiFi LAN scan/discovery routes
+  app.post("/api/wifi/host", (req, res) => {
+    const { playerId, name, hostPeerId, wifiSsid } = req.body;
+    if (!playerId || !name || !hostPeerId) {
+      res.status(400).json({ error: "playerId, name, and hostPeerId are required" });
+      return;
+    }
+
+    let clientIp = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
+    if (clientIp.includes(",")) {
+      clientIp = clientIp.split(",")[0].trim();
+    }
+
+    // Generate a clean room ID with a WIFI- prefix
+    const roomId = `WIFI-${generateRoomId()}`;
+    const newRoom: GameRoom = {
+      roomId,
+      players: [{ id: playerId, name: name.trim().slice(0, 16), secretCode: null }],
+      guesses: [],
+      status: "waiting",
+      turn: null,
+      winnerId: null,
+      updatedAt: Date.now(),
+      isWifi: true,
+      wifiIp: clientIp,
+      hostPeerId,
+    };
+
+    rooms.set(roomId, newRoom);
+    console.log(`[WiFi] Hosted room ${roomId} by ${name} (${playerId}) on IP ${clientIp} using PeerJS ${hostPeerId}`);
+    res.status(201).json(newRoom);
+  });
+
+  app.get("/api/wifi/lobbies", (req, res) => {
+    let clientIp = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
+    if (clientIp.includes(",")) {
+      clientIp = clientIp.split(",")[0].trim();
+    }
+
+    const activeLobbies: any[] = [];
+    const now = Date.now();
+    const expiry = 1 * 60 * 60 * 1000; // 1 hour expiry for WiFi rooms
+
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.isWifi && room.wifiIp === clientIp && room.status === "waiting") {
+        if (now - room.updatedAt < expiry) {
+          activeLobbies.push({
+            roomId: room.roomId,
+            hostName: room.players[0]?.name || "Unknown",
+            hostId: room.players[0]?.id || "",
+            hostPeerId: room.hostPeerId,
+            updatedAt: room.updatedAt,
+          });
+        } else {
+          rooms.delete(roomId);
+        }
+      }
+    }
+
+    res.json(activeLobbies);
+  });
+
+  app.get("/api/wifi/rooms/:roomId", (req, res) => {
+    const { roomId } = req.params;
+    const room = rooms.get(roomId.toUpperCase());
+    if (!room || !room.isWifi) {
+      res.status(404).json({ error: "WiFi room not found" });
+      return;
+    }
+    res.json({
+      roomId: room.roomId,
+      hostPeerId: room.hostPeerId,
+      hostName: room.players[0]?.name || "Unknown",
+    });
+  });
+
+  app.post("/api/wifi/leave", (req, res) => {
+    const { roomId } = req.body;
+    if (roomId) {
+      rooms.delete(roomId.toUpperCase());
+      console.log(`[WiFi] Removed room ${roomId} upon host termination`);
+    }
+    res.json({ success: true });
+  });
 
   // Health check
   app.get("/api/health", (req, res) => {

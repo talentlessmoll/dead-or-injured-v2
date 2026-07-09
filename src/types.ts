@@ -25,6 +25,9 @@ export interface GameRoom {
   isTimed?: boolean;
   timerDuration?: number; // in seconds
   missedTurnsCount?: Record<string, number>;
+  isWifi?: boolean;
+  wifiIp?: string;
+  hostPeerId?: string;
 }
 
 export interface ScratchpadState {
