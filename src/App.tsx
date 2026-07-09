@@ -30,19 +30,28 @@ import {
   SinglePlayerState,
   Player as RoomPlayer,
   ChatMessage,
+  LeaderboardRecord,
 } from "./types";
 import {
   hasUniqueDigits,
   generateRandomCode,
   calculateScore,
   getSmartAIGuess,
+  addLeaderboardRecord,
+  mergeLeaderboards,
+  getLocalLeaderboard,
+  saveLocalLeaderboard,
+  getAIGuessByPersonality,
 } from "./utils";
+
+import { AI_PERSONALITIES } from "./aiPersonalities";
 
 import MainMenu from "./components/MainMenu";
 import Scratchpad from "./components/Scratchpad";
 import TactileKeyboard from "./components/TactileKeyboard";
 import BattleLogs from "./components/BattleLogs";
 import RoomLobby from "./components/RoomLobby";
+import Leaderboard from "./components/Leaderboard";
 
 // Helper to generate a fast unique player ID
 function generatePlayerId(): string {
@@ -55,6 +64,7 @@ const initialScratchpad = (): ScratchpadState => ({
   confirmed: Array(10).fill(false),
   maybe: Array(10).fill(false),
   notes: "",
+  matrix: Array(10).fill(null).map(() => Array(4).fill("neutral")),
 });
 
 export default function App() {
@@ -65,6 +75,7 @@ export default function App() {
   // Core navigation state
   const [gameMode, setGameMode] = useState<"home" | "single" | "local" | "online">("home");
   const [showInstructions, setShowInstructions] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Draft input values
@@ -94,6 +105,9 @@ export default function App() {
   const [singlePlayer, setSinglePlayer] = useState<SinglePlayerState | null>(null);
   const [singleScratch, setSingleScratch] = useState<ScratchpadState>(initialScratchpad());
   const [aiThinking, setAiThinking] = useState(false);
+  const [selectedAiId, setSelectedAiId] = useState<string>("david");
+  const [aiDialogue, setAiDialogue] = useState<string>("");
+  const [activeEmotes, setActiveEmotes] = useState<{ id: string; senderName: string; emoji: string; isOpponent: boolean; xOffset: number }[]>([]);
 
   // Local Pass & Play State
   const [localState, setLocalState] = useState<{
@@ -132,6 +146,95 @@ export default function App() {
       setRoomCodeInput(roomParam.toUpperCase());
     }
   }, []);
+
+  const loggedMatchesRef = useRef<Set<string>>(new Set());
+
+  // Monitor Single Player (VS AI) game endings
+  useEffect(() => {
+    if (!singlePlayer || singlePlayer.status !== "ended" || !singlePlayer.winner) return;
+    
+    const firstTimestamp = singlePlayer.guesses[0]?.timestamp || Date.now();
+    const matchId = `single_${firstTimestamp}_${singlePlayer.playerCode}_${singlePlayer.aiCode}`;
+    
+    if (loggedMatchesRef.current.has(matchId)) return;
+    loggedMatchesRef.current.add(matchId);
+    
+    const isPlayerWinner = singlePlayer.winner === "player";
+    const turns = singlePlayer.guesses.filter(g => g.playerId === "player").length;
+
+    addLeaderboardRecord({
+      matchId,
+      gameMode: "single",
+      player1Name: playerName,
+      player1Id: playerId,
+      player2Name: "AI Algorithm",
+      player2Id: "ai",
+      winnerName: isPlayerWinner ? playerName : "AI Algorithm",
+      winnerId: isPlayerWinner ? playerId : "ai",
+      turnsUsed: turns,
+      timestamp: Date.now(),
+    });
+  }, [singlePlayer?.status, singlePlayer?.winner, playerName, playerId]);
+
+  // Monitor Local Pass & Play game endings
+  useEffect(() => {
+    if (!localState || localState.status !== "ended" || !localState.winner) return;
+    
+    const firstTimestamp = localState.guesses[0]?.timestamp || Date.now();
+    const matchId = `local_${firstTimestamp}_${localState.p1Code}_${localState.p2Code}`;
+    
+    if (loggedMatchesRef.current.has(matchId)) return;
+    loggedMatchesRef.current.add(matchId);
+    
+    const isP1Winner = localState.winner === "p1";
+    const winnerName = isP1Winner ? localState.p1Name : localState.p2Name;
+    const turns = localState.guesses.filter(g => g.playerId === localState.winner).length;
+
+    addLeaderboardRecord({
+      matchId,
+      gameMode: "local",
+      player1Name: localState.p1Name || "Player 1",
+      player1Id: "p1",
+      player2Name: localState.p2Name || "Player 2",
+      player2Id: "p2",
+      winnerName,
+      winnerId: localState.winner,
+      turnsUsed: turns,
+      timestamp: Date.now(),
+    });
+  }, [localState?.status, localState?.winner]);
+
+  // Monitor Online Multiplayer game endings
+  useEffect(() => {
+    if (!activeRoom || activeRoom.status !== "ended" || !activeRoom.winnerId) return;
+    
+    const firstTimestamp = activeRoom.guesses[0]?.timestamp || Date.now();
+    const matchId = `online_${activeRoom.roomId}_${firstTimestamp}`;
+    
+    if (loggedMatchesRef.current.has(matchId)) return;
+    loggedMatchesRef.current.add(matchId);
+    
+    const p1 = activeRoom.players[0];
+    const p2 = activeRoom.players[1] || { id: "p2_stub", name: "Guest" };
+    
+    const winnerPlayer = activeRoom.players.find(p => p.id === activeRoom.winnerId);
+    const winnerName = winnerPlayer ? winnerPlayer.name : "Opponent";
+    
+    const turns = activeRoom.guesses.filter(g => g.playerId === activeRoom.winnerId).length || Math.ceil(activeRoom.guesses.length / 2) || 1;
+
+    addLeaderboardRecord({
+      matchId,
+      gameMode: "online",
+      player1Name: p1.name,
+      player1Id: p1.id,
+      player2Name: p2.name,
+      player2Id: p2.id,
+      winnerName,
+      winnerId: activeRoom.winnerId,
+      turnsUsed: turns,
+      timestamp: Date.now(),
+    });
+  }, [activeRoom?.status, activeRoom?.winnerId]);
 
   const handleUpdatePlayerName = (name: string) => {
     const trimmedName = name.trim().slice(0, 16) || "Guesser";
@@ -383,6 +486,7 @@ export default function App() {
           type: "JOIN",
           playerId,
           playerName: playerName.trim().slice(0, 16),
+          leaderboard: getLocalLeaderboard(),
         });
       }
     });
@@ -411,6 +515,12 @@ export default function App() {
     switch (data.type) {
       case "JOIN": {
         if (hostRole) {
+          // Sync guest's leaderboard into host's storage
+          if (data.leaderboard && Array.isArray(data.leaderboard)) {
+            const merged = mergeLeaderboards(getLocalLeaderboard(), data.leaderboard);
+            saveLocalLeaderboard(merged);
+          }
+
           // Host receives join request
           setActiveRoom((prevRoom) => {
             if (!prevRoom) return null;
@@ -431,11 +541,12 @@ export default function App() {
               updatedAt: Date.now(),
             };
 
-            // Send full room state back to guest
+            // Send full room state and host's merged ledger back to guest
             setTimeout(() => {
               connRef.current?.send({
                 type: "ROOM_STATE",
                 room: updatedRoom,
+                leaderboard: getLocalLeaderboard(),
               });
             }, 100);
 
@@ -449,6 +560,12 @@ export default function App() {
         if (!hostRole) {
           // Guest receives room state update from host
           setActiveRoom(data.room);
+
+          // Sync host's leaderboard back into guest's storage
+          if (data.leaderboard && Array.isArray(data.leaderboard)) {
+            const merged = mergeLeaderboards(getLocalLeaderboard(), data.leaderboard);
+            saveLocalLeaderboard(merged);
+          }
         }
         break;
       }
@@ -700,6 +817,25 @@ export default function App() {
 
       case "CHAT": {
         setChatMessages((prev) => [...prev, data.message]);
+        break;
+      }
+
+      case "TAUNT": {
+        const id = Math.random().toString(36).substring(2, 9);
+        const xOffset = Math.floor(Math.random() * 60) - 30;
+        setActiveEmotes((prev) => [
+          ...prev,
+          {
+            id,
+            senderName: data.senderName,
+            emoji: data.emoji,
+            isOpponent: true,
+            xOffset,
+          },
+        ]);
+        setTimeout(() => {
+          setActiveEmotes((prev) => prev.filter((e) => e.id !== id));
+        }, 2500);
         break;
       }
 
@@ -1105,6 +1241,76 @@ export default function App() {
     }
   };
 
+  const sendTaunt = (emoji: string) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    const xOffset = Math.floor(Math.random() * 60) - 30;
+    
+    // Show locally
+    setActiveEmotes((prev) => [
+      ...prev,
+      {
+        id,
+        senderName: "YOU",
+        emoji,
+        isOpponent: false,
+        xOffset,
+      },
+    ]);
+    
+    // Auto-remove
+    setTimeout(() => {
+      setActiveEmotes((prev) => prev.filter((e) => e.id !== id));
+    }, 2500);
+
+    // Send to peer if online
+    if (gameMode === "online" && connRef.current) {
+      try {
+        connRef.current.send({
+          type: "TAUNT",
+          emoji,
+          senderName: playerName,
+        });
+      } catch (e) {
+        console.error("Failed to send taunt:", e);
+      }
+    } else if (gameMode === "single" && singlePlayer) {
+      // In single player vs AI, triggering a taunt sometimes triggers an AI reply!
+      const activeAi = AI_PERSONALITIES.find((a) => a.id === selectedAiId);
+      if (activeAi && Math.random() < 0.8) {
+        setTimeout(() => {
+          const aiId = Math.random().toString(36).substring(2, 9);
+          const aiXOffset = Math.floor(Math.random() * 60) - 30;
+          const aiEmojis = ["😈", "😏", "🧐", "💀", "🤖", "🔥", "😎"];
+          const randomAiEmoji = aiEmojis[Math.floor(Math.random() * aiEmojis.length)];
+          
+          setActiveEmotes((prev) => [
+            ...prev,
+            {
+              id: aiId,
+              senderName: activeAi.name,
+              emoji: randomAiEmoji,
+              isOpponent: true,
+              xOffset: aiXOffset,
+            },
+          ]);
+
+          setTimeout(() => {
+            setActiveEmotes((prev) => prev.filter((e) => e.id !== aiId));
+          }, 2500);
+
+          const tauntReplies = [
+            "Your gestures do not disrupt my matrix.",
+            "Amusing code. Now return to the mathematics.",
+            "Distraction algorithms evaluated: Negligible effect.",
+            "My thermal vents register your enthusiasm.",
+            "Calculating reply: Nice try."
+          ];
+          setAiDialogue(tauntReplies[Math.floor(Math.random() * tauntReplies.length)]);
+        }, 1000);
+      }
+    }
+  };
+
   const handleOnlineLeave = () => {
     cleanupPeerConnection();
     setActiveRoom(null);
@@ -1123,6 +1329,12 @@ export default function App() {
     setError(null);
     setDraftCode("");
     setSingleScratch(initialScratchpad());
+    
+    // Choose starting dialogue based on personality
+    const activeAi = AI_PERSONALITIES.find((a) => a.id === selectedAiId) || AI_PERSONALITIES[1];
+    const startQuote = activeAi.onStart[Math.floor(Math.random() * activeAi.onStart.length)];
+    setAiDialogue(startQuote);
+
     setSinglePlayer({
       playerCode: null,
       aiCode: generateRandomCode(),
@@ -1169,9 +1381,13 @@ export default function App() {
     };
 
     const nextGuesses = [...singlePlayer.guesses, playerGuess];
+    const activeAi = AI_PERSONALITIES.find((a) => a.id === selectedAiId) || AI_PERSONALITIES[1];
 
     if (score.dead === 4) {
       // Player wins!
+      const winQuote = activeAi.onPlayerWin[Math.floor(Math.random() * activeAi.onPlayerWin.length)];
+      setAiDialogue(winQuote);
+
       setSinglePlayer({
         ...singlePlayer,
         guesses: nextGuesses,
@@ -1182,6 +1398,12 @@ export default function App() {
       setDraftCode("");
       return;
     }
+
+    // Set AI custom reaction to player's guess
+    const reactionQuote = activeAi.onPlayerGuess[Math.floor(Math.random() * activeAi.onPlayerGuess.length)]
+      .replace("{dead}", score.dead.toString())
+      .replace("{injured}", score.injured.toString());
+    setAiDialogue(reactionQuote);
 
     // Trigger AI Turn
     setSinglePlayer({
@@ -1197,8 +1419,8 @@ export default function App() {
       setSinglePlayer((current) => {
         if (!current || current.status !== "playing" || !current.playerCode) return current;
 
-        // Smart guess calculation
-        const aiGuessCode = getSmartAIGuess(current.aiGuesses, current.playerCode);
+        // Smart guess calculation based on selected personality
+        const aiGuessCode = getAIGuessByPersonality(selectedAiId, current.aiGuesses, current.playerCode);
         const aiScore = calculateScore(aiGuessCode, current.playerCode);
 
         const aiGuess: Guess = {
@@ -1216,6 +1438,9 @@ export default function App() {
 
         if (aiScore.dead === 4) {
           // AI wins
+          const lossQuote = activeAi.onAiWin[Math.floor(Math.random() * activeAi.onAiWin.length)];
+          setAiDialogue(lossQuote);
+
           return {
             ...current,
             guesses: updatedGuesses,
@@ -1226,6 +1451,13 @@ export default function App() {
           };
         }
 
+        // Set AI guess announcement quote
+        const aiGuessQuote = activeAi.onAiGuess[Math.floor(Math.random() * activeAi.onAiGuess.length)]
+          .replace("{guess}", aiGuessCode)
+          .replace("{dead}", aiScore.dead.toString())
+          .replace("{injured}", aiScore.injured.toString());
+        setAiDialogue(aiGuessQuote);
+
         return {
           ...current,
           guesses: updatedGuesses,
@@ -1233,7 +1465,7 @@ export default function App() {
           turn: "player",
         };
       });
-    }, 1500);
+    }, 1800);
   };
 
   // --- LOCAL PASS & PLAY ACTIONS ---
@@ -1361,6 +1593,7 @@ export default function App() {
             else setGameMode("online");
           }}
           onShowInstructions={() => setShowInstructions(true)}
+          onShowLeaderboard={() => setShowLeaderboard(true)}
         />
       )}
 
@@ -1637,6 +1870,27 @@ export default function App() {
                   }
                   submitLabel="Lock In Guess"
                 />
+
+                {/* Interactive Emote Flare Panel */}
+                <div className="p-3 bg-slate-950/80 border border-slate-900 rounded-xl">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest">
+                      BATTLE TAUNTS / FLARES
+                    </span>
+                    <span className="text-[8px] font-mono text-slate-600">CLICK TO DISRUPT</span>
+                  </div>
+                  <div className="flex gap-2 justify-between">
+                    {["🤔", "😎", "🔥", "💀", "😱", "🎉", "⚡", "❓"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => sendTaunt(emoji)}
+                        className="w-9 h-9 flex items-center justify-center text-lg bg-slate-900/50 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* Right Column: Scratchpad and Chat */}
@@ -1819,7 +2073,58 @@ export default function App() {
 
           {/* Setup Lock Code Form */}
           {singlePlayer.status === "setup" && (
-            <div className="col-span-12 flex flex-col items-center justify-center py-10">
+            <div className="col-span-12 flex flex-col items-center justify-center py-6 gap-6">
+              <div className="w-full max-w-2xl">
+                <h3 className="text-center text-xs font-mono font-bold tracking-wider text-slate-400 mb-4 uppercase">
+                  SELECT YOUR AI OPPONENT PERSONALITY
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  {AI_PERSONALITIES.map((ai) => {
+                    const isSelected = selectedAiId === ai.id;
+                    return (
+                      <div
+                        key={ai.id}
+                        onClick={() => {
+                          setSelectedAiId(ai.id);
+                          const startQuote = ai.onStart[Math.floor(Math.random() * ai.onStart.length)];
+                          setAiDialogue(startQuote);
+                        }}
+                        className={`border rounded-xl p-4 flex flex-col justify-between transition-all cursor-pointer relative overflow-hidden select-none ${
+                          isSelected
+                            ? `${ai.color} ${ai.glow} border-opacity-100 scale-[1.02]`
+                            : "border-slate-900 bg-slate-950/40 text-slate-400 hover:border-slate-850"
+                        }`}
+                      >
+                        {isSelected && (
+                          <div className="absolute top-0 right-0 bg-emerald-500 text-slate-950 text-[8px] font-mono font-bold uppercase py-0.5 px-2 rounded-bl">
+                            Selected
+                          </div>
+                        )}
+                        <div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-2xl">{ai.avatar}</span>
+                            <div>
+                              <h4 className="font-mono font-bold text-sm text-slate-100">{ai.name}</h4>
+                              <p className={`text-[9px] font-mono font-bold uppercase ${
+                                ai.difficulty === "Easy" ? "text-sky-400" : ai.difficulty === "Medium" ? "text-emerald-400" : "text-rose-400"
+                              }`}>
+                                {ai.difficulty} DIFFICULTY
+                              </p>
+                            </div>
+                          </div>
+                          <p className="text-[10px] font-mono text-slate-500 leading-tight mb-2 uppercase">
+                            {ai.title}
+                          </p>
+                          <p className="text-xs text-slate-400 leading-relaxed mb-4">
+                            {ai.bio}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="w-full max-w-md">
                 <TactileKeyboard
                   value={draftCode}
@@ -1837,13 +2142,48 @@ export default function App() {
             <>
               {/* Left Column: Log and Input */}
               <div className="col-span-12 md:col-span-7 flex flex-col gap-4">
+                {/* AI Dialogue Terminal Bubble */}
+                {(() => {
+                  const activeAi = AI_PERSONALITIES.find((a) => a.id === selectedAiId) || AI_PERSONALITIES[1];
+                  return (
+                    <div className={`p-4 rounded-xl border relative overflow-hidden transition-all ${activeAi.color} ${activeAi.glow}`}>
+                      <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[size:100%_4px,3px_100%] pointer-events-none opacity-40" />
+                      
+                      <div className="flex items-start gap-3 relative z-10">
+                        <span className="text-3xl p-1 bg-slate-950/60 border border-slate-900 rounded-lg">{activeAi.avatar}</span>
+                        <div className="flex-1 font-mono">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-bold uppercase tracking-wider">{activeAi.name}</span>
+                            <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border border-current ${
+                              activeAi.difficulty === "Easy" ? "text-sky-400/80 bg-sky-950/20" : activeAi.difficulty === "Medium" ? "text-emerald-400/80 bg-emerald-950/20" : "text-rose-400/80 bg-rose-950/20"
+                            }`}>
+                              {activeAi.difficulty}
+                            </span>
+                          </div>
+                          
+                          <div className="text-xs text-slate-200 bg-slate-950/40 p-2.5 rounded-lg border border-slate-900/60 leading-relaxed italic">
+                            {aiThinking ? (
+                              <div className="flex items-center gap-1.5 text-[11px] text-amber-400 animate-pulse uppercase font-bold">
+                                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-ping" />
+                                CRUNCHING DATA MATRIX...
+                              </div>
+                            ) : (
+                              aiDialogue || "Systems active. Awaiting your coordinates."
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Battle Logs Dashboard */}
                 <div className="flex-1 bg-slate-900/20 border border-slate-900 rounded-xl p-4">
                   <BattleLogs
                     guesses={singlePlayer.guesses}
                     playerId="player"
                     opponentId="ai"
-                    opponentName="COGNITIVE AI"
+                    opponentName={AI_PERSONALITIES.find((a) => a.id === selectedAiId)?.name || "COGNITIVE AI"}
                     playerName="YOU"
                   />
                 </div>
@@ -1861,6 +2201,27 @@ export default function App() {
                   }
                   submitLabel="TRANSMIT GUESS CODE"
                 />
+
+                {/* Interactive Emote Flare Panel */}
+                <div className="p-3 bg-slate-950/80 border border-slate-900 rounded-xl">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest">
+                      BATTLE TAUNTS / FLARES
+                    </span>
+                    <span className="text-[8px] font-mono text-slate-600">CLICK TO DISRUPT</span>
+                  </div>
+                  <div className="flex gap-2 justify-between">
+                    {["🤔", "😎", "🔥", "💀", "😱", "🎉", "⚡", "❓"].map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => sendTaunt(emoji)}
+                        className="w-9 h-9 flex items-center justify-center text-lg bg-slate-900/50 hover:bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-lg cursor-pointer active:scale-95 transition-all"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* Right Column: Scratchpad (Sticky) */}
@@ -2345,6 +2706,37 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* LEADERBOARD MODAL */}
+      <AnimatePresence>
+        {showLeaderboard && (
+          <Leaderboard
+            onClose={() => setShowLeaderboard(false)}
+            currentPlayerName={playerName}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* ACTIVE FLOATING EMOTE FLARES */}
+      <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+        <AnimatePresence>
+          {activeEmotes.map((e) => (
+            <motion.div
+              key={e.id}
+              initial={{ y: "100vh", opacity: 0, scale: 0.5, x: e.isOpponent ? `calc(15% + ${e.xOffset}px)` : `calc(85% + ${e.xOffset}px)` }}
+              animate={{ y: "15vh", opacity: [0, 1, 1, 0], scale: [0.5, 1.2, 1.2, 1.5] }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 2.3, ease: "easeOut" }}
+              className="absolute bottom-0 flex flex-col items-center"
+            >
+              <span className="text-5xl filter drop-shadow-[0_0_12px_rgba(255,255,255,0.4)]">{e.emoji}</span>
+              <span className="bg-slate-950/90 border border-slate-800 text-[8px] font-mono font-bold px-1.5 py-0.5 rounded text-slate-300 mt-1 uppercase tracking-tight shadow-md">
+                {e.senderName}
+              </span>
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

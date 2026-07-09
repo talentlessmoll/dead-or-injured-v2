@@ -22,11 +22,11 @@ export default function RoomLobby({ room, playerId, onLeave, onUpdateSettings }:
     QRCode.toDataURL(
       joinUrl,
       {
-        margin: 2,
+        margin: 1,
         width: 250,
         color: {
-          dark: "#0f172a", // slate-900
-          light: "#ffffff",
+          dark: "#10b981", // Emerald-500
+          light: "#020617", // slate-950 background
         },
       },
       (err, url) => {
@@ -95,16 +95,21 @@ export default function RoomLobby({ room, playerId, onLeave, onUpdateSettings }:
           </h1>
 
           {/* QR Code Container */}
-          <div className="p-3 bg-white rounded-xl mb-4 shadow-lg border-2 border-emerald-500/20 flex items-center justify-center min-w-[144px] min-h-[144px]">
+          <div className="relative p-3 bg-slate-950 border border-emerald-500/20 rounded-xl mb-4 shadow-[0_0_15px_rgba(16,185,129,0.05)] flex items-center justify-center min-w-[144px] min-h-[144px]">
             {qrCodeUrl ? (
-              <img
-                src={qrCodeUrl}
-                alt="Scan to join match"
-                className="w-36 h-36 select-none animate-fade-in"
-                referrerPolicy="no-referrer"
-              />
+              <div className="relative flex items-center justify-center">
+                <img
+                  src={qrCodeUrl}
+                  alt="Scan to join match"
+                  className="w-36 h-36 select-none animate-fade-in rounded-lg border border-emerald-500/10"
+                  referrerPolicy="no-referrer"
+                />
+                <div className="absolute w-8 h-8 rounded bg-slate-950 border border-emerald-500/40 flex items-center justify-center shadow-[0_0_10px_rgba(16,185,129,0.3)]">
+                  <span className="text-[10px] font-bold text-emerald-400 font-mono tracking-tighter">DI</span>
+                </div>
+              </div>
             ) : (
-              <div className="w-36 h-36 bg-slate-100 animate-pulse rounded-lg" />
+              <div className="w-36 h-36 bg-slate-950 animate-pulse rounded-lg" />
             )}
           </div>
 

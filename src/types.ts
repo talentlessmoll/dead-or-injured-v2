@@ -32,6 +32,7 @@ export interface ScratchpadState {
   confirmed: boolean[];  // index 0-9 corresponding to digits '0'-'9'
   maybe: boolean[];      // index 0-9 corresponding to digits '0'-'9'
   notes: string;         // text notes
+  matrix?: ("neutral" | "yes" | "no")[][];
 }
 
 export interface SinglePlayerState {
@@ -51,4 +52,18 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
 }
+
+export interface LeaderboardRecord {
+  matchId: string;
+  gameMode: "online" | "single" | "local";
+  player1Name: string;
+  player1Id: string;
+  player2Name: string;
+  player2Id: string;
+  winnerName: string | null;
+  winnerId: string | null;
+  turnsUsed: number;
+  timestamp: number;
+}
+
 

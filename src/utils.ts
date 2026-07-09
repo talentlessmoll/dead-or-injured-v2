@@ -1,4 +1,4 @@
-import { Guess } from "./types";
+import { Guess, LeaderboardRecord } from "./types";
 
 // Check if string is 4 unique digits
 export function hasUniqueDigits(code: string): boolean {
@@ -91,3 +91,83 @@ export function getSmartAIGuess(aiHistory: Guess[], userSecret: string): string 
   const idx = Math.floor(Math.random() * candidates.length);
   return candidates[idx];
 }
+
+// Get local leaderboard records
+export function getLocalLeaderboard(): LeaderboardRecord[] {
+  try {
+    const raw = localStorage.getItem("doi_leaderboard");
+    if (!raw) return [];
+    return JSON.parse(raw) as LeaderboardRecord[];
+  } catch (e) {
+    console.error("Failed to parse local leaderboard:", e);
+    return [];
+  }
+}
+
+// Save local leaderboard records
+export function saveLocalLeaderboard(records: LeaderboardRecord[]): void {
+  try {
+    localStorage.setItem("doi_leaderboard", JSON.stringify(records));
+  } catch (e) {
+    console.error("Failed to save local leaderboard:", e);
+  }
+}
+
+// Add a single record to the local leaderboard
+export function addLeaderboardRecord(record: LeaderboardRecord): LeaderboardRecord[] {
+  const current = getLocalLeaderboard();
+  const exists = current.some((r) => r.matchId === record.matchId);
+  if (exists) return current;
+  const updated = [record, ...current];
+  saveLocalLeaderboard(updated);
+  return updated;
+}
+
+// Get AI guess based on selected personality
+export function getAIGuessByPersonality(
+  personalityId: string,
+  aiHistory: Guess[],
+  userSecret: string
+): string {
+  if (personalityId === "sam") {
+    // S.A.M. has a 35% chance to make a fully random guess (Easy)
+    if (Math.random() < 0.35) {
+      return generateRandomCode();
+    }
+  }
+  
+  // D.A.V.I.D. and HAL-9000 (and S.A.M.'s other turns) use the smart algorithm
+  return getSmartAIGuess(aiHistory, userSecret);
+}
+
+// Merge two leaderboards and return the unified unique de-duplicated list
+export function mergeLeaderboards(
+  local: LeaderboardRecord[],
+  remote: LeaderboardRecord[]
+): LeaderboardRecord[] {
+  const mergedMap = new Map<string, LeaderboardRecord>();
+  
+  // Put local ones first
+  local.forEach((r) => mergedMap.set(r.matchId, r));
+  
+  // Put remote ones (remote will overwrite if matchId exists, or we can keep the one with a winner or higher turns)
+  remote.forEach((r) => {
+    const existing = mergedMap.get(r.matchId);
+    if (!existing) {
+      mergedMap.set(r.matchId, r);
+    } else {
+      // If remote has a winner or is newer, keep it
+      if (!existing.winnerId && r.winnerId) {
+        mergedMap.set(r.matchId, r);
+      } else if (r.timestamp > existing.timestamp) {
+        mergedMap.set(r.matchId, r);
+      }
+    }
+  });
+
+  const mergedList = Array.from(mergedMap.values());
+  // Sort descending by timestamp
+  mergedList.sort((a, b) => b.timestamp - a.timestamp);
+  return mergedList;
+}
+

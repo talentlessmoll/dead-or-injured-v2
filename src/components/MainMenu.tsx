@@ -1,12 +1,13 @@
 import React, { useState } from "react";
 import { motion } from "motion/react";
-import { Target, Users, Bot, Smartphone, HelpCircle, Terminal, User } from "lucide-react";
+import { Target, Users, Bot, Smartphone, HelpCircle, Terminal, User, Trophy } from "lucide-react";
 
 interface MainMenuProps {
   playerName: string;
   onUpdatePlayerName: (name: string) => void;
   onSelectMode: (mode: "online" | "single" | "local") => void;
   onShowInstructions: () => void;
+  onShowLeaderboard: () => void;
 }
 
 export default function MainMenu({
@@ -14,6 +15,7 @@ export default function MainMenu({
   onUpdatePlayerName,
   onSelectMode,
   onShowInstructions,
+  onShowLeaderboard,
 }: MainMenuProps) {
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState(playerName);
@@ -94,13 +96,22 @@ export default function MainMenu({
             </div>
           </div>
 
-          <button
-            onClick={onShowInstructions}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 hover:border-slate-600 rounded-lg text-slate-300 text-xs transition-colors cursor-pointer"
-          >
-            <HelpCircle className="w-3.5 h-3.5" />
-            <span>HOW TO PLAY</span>
-          </button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button
+              onClick={onShowInstructions}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-slate-800/80 hover:bg-slate-700 border border-slate-700/60 hover:border-slate-600 rounded-lg text-slate-300 text-[11px] sm:text-xs transition-colors cursor-pointer"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
+              <span>HOW TO PLAY</span>
+            </button>
+            <button
+              onClick={onShowLeaderboard}
+              className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-emerald-950/40 hover:bg-emerald-900/40 border border-emerald-500/20 hover:border-emerald-500/40 rounded-lg text-emerald-400 text-[11px] sm:text-xs font-mono tracking-wide transition-colors cursor-pointer"
+            >
+              <Trophy className="w-3.5 h-3.5 text-emerald-400" />
+              <span>LEADERBOARD</span>
+            </button>
+          </div>
         </div>
       </motion.div>
 
