@@ -1,17 +1,70 @@
 import React, { useState } from "react";
-import { X, Check, HelpCircle, FileText, Grid, Hash, RotateCcw, AlertCircle } from "lucide-react";
+import { X, Check, HelpCircle, FileText, Grid, Hash, RotateCcw, AlertCircle, Zap } from "lucide-react";
 import { ScratchpadState } from "../types";
 
 interface ScratchpadProps {
   state: ScratchpadState;
   onChange: (newState: ScratchpadState) => void;
+  onAutofill?: (code: string) => void;
 }
 
-export default function Scratchpad({ state, onChange }: ScratchpadProps) {
+export default function Scratchpad({ state, onChange, onAutofill }: ScratchpadProps) {
   const [activeTab, setActiveTab] = useState<"matrix" | "digits">("matrix");
 
   // Ensure matrix is initialized (for backwards compatibility if state loaded from legacy)
   const matrix = state.matrix || Array(10).fill(null).map(() => Array(4).fill("neutral"));
+
+  // Find deduced digits from the matrix using standard and smart logical deduction
+  const getDeducedCodeWithSmartInference = (): string[] => {
+    let deduced = ["", "", "", ""];
+    const explicitYesDigits = new Set<number>();
+    
+    // 1. Pass: Find explicit "yes" positions
+    for (let p = 0; p < 4; p++) {
+      for (let d = 0; d < 10; d++) {
+        if (matrix[d] && matrix[d][p] === "yes") {
+          deduced[p] = d.toString();
+          explicitYesDigits.add(d);
+          break;
+        }
+      }
+    }
+    
+    // 2. Pass: Smart Inference
+    // For each position that is still empty, let's find which digits can possibly go there.
+    // A digit can go to position p if:
+    // - matrix[d][p] !== "no"
+    // - d is not already explicitly confirmed in another position
+    // If there is exactly one such digit, we can infer it!
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let p = 0; p < 4; p++) {
+        if (deduced[p] !== "") continue;
+        
+        const candidates: number[] = [];
+        for (let d = 0; d < 10; d++) {
+          if (explicitYesDigits.has(d)) continue;
+          if (matrix[d] && matrix[d][p] !== "no") {
+            candidates.push(d);
+          }
+        }
+        
+        if (candidates.length === 1) {
+          const inferredDigit = candidates[0];
+          deduced[p] = inferredDigit.toString();
+          explicitYesDigits.add(inferredDigit);
+          changed = true;
+        }
+      }
+    }
+    
+    return deduced;
+  };
+
+  const deducedArray = getDeducedCodeWithSmartInference();
+  const deducedCode = deducedArray.join("");
+  const hasDeducedDigits = deducedArray.some(c => c !== "");
 
   const handleDigitClick = (idx: number) => {
     const eliminated = [...state.eliminated];
@@ -290,6 +343,32 @@ export default function Scratchpad({ state, onChange }: ScratchpadProps) {
           </div>
         )}
       </div>
+
+      {/* Deductive Autofill Guess Trigger */}
+      {onAutofill && hasDeducedDigits && (
+        <button
+          onClick={() => onAutofill(deducedCode)}
+          className="mt-3 w-full py-2 px-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-mono text-[11px] font-bold uppercase rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer shadow-[0_0_12px_rgba(16,185,129,0.25)] hover:scale-[1.01] active:scale-95"
+          title="Auto-fills the draft guess code input field with current deduction"
+        >
+          <Zap className="w-3 h-3 text-slate-950 animate-bounce" />
+          <span>Autofill Guess:</span>
+          <div className="flex gap-1 ml-1">
+            {deducedArray.map((char, idx) => (
+              <span
+                key={idx}
+                className={`inline-block w-5 h-5 leading-5 text-center rounded text-xs font-bold border ${
+                  char 
+                    ? "bg-slate-950 border-emerald-400 text-emerald-400" 
+                    : "bg-slate-950/40 border-slate-800 text-slate-600"
+                }`}
+              >
+                {char || "·"}
+              </span>
+            ))}
+          </div>
+        </button>
+      )}
 
       {/* Notes Area */}
       <div className="mt-3">

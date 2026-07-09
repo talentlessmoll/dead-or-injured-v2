@@ -55,7 +55,7 @@ export interface ChatMessage {
 
 export interface LeaderboardRecord {
   matchId: string;
-  gameMode: "online" | "single" | "local";
+  gameMode: "online" | "single" | "local" | "wifi";
   player1Name: string;
   player1Id: string;
   player2Name: string;
