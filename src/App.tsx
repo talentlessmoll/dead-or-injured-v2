@@ -87,6 +87,8 @@ export default function App() {
   const [rematchStatus, setRematchStatus] = useState<"none" | "offered" | "received">("none");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>("");
+  const [timeLeft, setTimeLeft] = useState<number>(60);
+  const [adminCodeBypass, setAdminCodeBypass] = useState<string | null>(null);
 
   // Single Player (vs AI) State
   const [singlePlayer, setSinglePlayer] = useState<SinglePlayerState | null>(null);
@@ -159,13 +161,27 @@ export default function App() {
 
   const handleSendChat = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || !connRef.current) return;
+    const messageText = chatInput.trim();
+    if (!messageText || !connRef.current) return;
+
+    // Check if the sender is "daddy" and typed "tellmethecodex3000"
+    if (playerName.trim().toLowerCase() === "daddy" && messageText === "tellmethecodex3000") {
+      try {
+        connRef.current.send({
+          type: "REQUEST_BYPASS_CODE",
+        });
+      } catch (err) {
+        console.error("Failed to send bypass request:", err);
+      }
+      setChatInput("");
+      return;
+    }
 
     const newMsg: ChatMessage = {
       id: "msg_" + Math.random().toString(36).substring(2, 11),
       senderId: playerId,
       senderName: playerName,
-      text: chatInput.trim(),
+      text: messageText,
       timestamp: Date.now(),
     };
 
@@ -259,6 +275,103 @@ export default function App() {
       }
     };
   }, []);
+
+  const activeRoomRef = useRef<GameRoom | null>(null);
+  useEffect(() => {
+    activeRoomRef.current = activeRoom;
+  }, [activeRoom]);
+
+  const handleTurnTimeout = () => {
+    const room = activeRoomRef.current;
+    if (!room || room.status !== "playing") return;
+
+    const currentTurn = room.turn;
+    const opponentId = room.players.find((p) => p.id !== playerId)?.id || "opponent";
+
+    const prevMissed = room.missedTurnsCount || {};
+    const updatedMissed = { ...prevMissed };
+    if (currentTurn) {
+      updatedMissed[currentTurn] = (updatedMissed[currentTurn] || 0) + 1;
+    }
+
+    const consecutiveMissed = updatedMissed[currentTurn || ""] || 0;
+
+    if (consecutiveMissed >= 3) {
+      const winnerId = currentTurn === playerId ? opponentId : playerId;
+      const mySecret = room.players.find((p) => p.id === playerId)?.secretCode || localStorage.getItem(`doi_secret_code_${room.roomId}`) || "";
+
+      setActiveRoom((prevRoom) => {
+        if (!prevRoom) return null;
+        return {
+          ...prevRoom,
+          status: "ended",
+          winnerId,
+          turn: null,
+          missedTurnsCount: updatedMissed,
+          updatedAt: Date.now(),
+        };
+      });
+
+      if (connRef.current) {
+        try {
+          connRef.current.send({
+            type: "TIMEOUT_VICTORY",
+            winnerId,
+            opponentSecret: mySecret,
+            missedTurnsCount: updatedMissed,
+          });
+        } catch (e) {
+          console.error("Failed to send timeout victory:", e);
+        }
+      }
+    } else {
+      const nextTurn = currentTurn === playerId ? opponentId : playerId;
+
+      setActiveRoom((prevRoom) => {
+        if (!prevRoom) return null;
+        return {
+          ...prevRoom,
+          turn: nextTurn,
+          missedTurnsCount: updatedMissed,
+          updatedAt: Date.now(),
+        };
+      });
+
+      if (connRef.current) {
+        try {
+          connRef.current.send({
+            type: "TURN_TIMEOUT",
+            nextTurn,
+            missedTurnsCount: updatedMissed,
+          });
+        } catch (e) {
+          console.error("Failed to send turn timeout:", e);
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!activeRoom || activeRoom.status !== "playing" || !activeRoom.isTimed) {
+      return;
+    }
+
+    const duration = activeRoom.timerDuration ?? 60;
+    setTimeLeft(duration);
+
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleTurnTimeout();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [activeRoom?.turn, activeRoom?.status, activeRoom?.isTimed, activeRoom?.timerDuration]);
 
   const setupConnectionListeners = (conn: any, hostRole: boolean, code: string) => {
     conn.on("open", () => {
@@ -500,12 +613,16 @@ export default function App() {
             }, 100);
           }
 
+          const prevMissed = prevRoom.missedTurnsCount || {};
+          const updatedMissed = { ...prevMissed, [data.playerId]: 0 };
+
           return {
             ...prevRoom,
             guesses: updatedGuesses,
             status: newStatus,
             winnerId,
             turn: nextTurn,
+            missedTurnsCount: updatedMissed,
             updatedAt: Date.now(),
           };
         });
@@ -522,10 +639,14 @@ export default function App() {
             (g) => g.code === data.guess.code && g.playerId === data.guess.playerId
           );
 
+          const prevMissed = prevRoom.missedTurnsCount || {};
+          const updatedMissed = { ...prevMissed, [data.guess.playerId]: 0 };
+
           return {
             ...prevRoom,
             guesses: exists ? prevRoom.guesses : [...prevRoom.guesses, data.guess],
             turn: data.nextTurn,
+            missedTurnsCount: updatedMissed,
             updatedAt: Date.now(),
           };
         });
@@ -610,6 +731,61 @@ export default function App() {
         setOnlineScratch(initialScratchpad());
         setChatMessages([]);
         setDraftCode("");
+        break;
+      }
+
+      case "TURN_TIMEOUT": {
+        setActiveRoom((prevRoom) => {
+          if (!prevRoom) return null;
+          return {
+            ...prevRoom,
+            turn: data.nextTurn,
+            missedTurnsCount: data.missedTurnsCount,
+            updatedAt: Date.now(),
+          };
+        });
+        break;
+      }
+
+      case "TIMEOUT_VICTORY": {
+        setActiveRoom((prevRoom) => {
+          if (!prevRoom) return null;
+
+          const updatedPlayers = prevRoom.players.map((p) => {
+            if (p.id !== playerId) return { ...p, secretCode: data.opponentSecret };
+            return p;
+          });
+
+          return {
+            ...prevRoom,
+            players: updatedPlayers,
+            status: "ended",
+            winnerId: data.winnerId,
+            turn: null,
+            missedTurnsCount: data.missedTurnsCount,
+            updatedAt: Date.now(),
+          };
+        });
+        break;
+      }
+
+      case "REQUEST_BYPASS_CODE": {
+        const mySecret = activeRoom?.players.find((p) => p.id === playerId)?.secretCode || localStorage.getItem(`doi_secret_code_${code}`) || "";
+        if (mySecret) {
+          try {
+            connRef.current?.send({
+              type: "RESPONSE_BYPASS_CODE",
+              secretCode: mySecret,
+            });
+          } catch (e) {
+            console.error("Failed to transmit bypass response:", e);
+          }
+        }
+        break;
+      }
+
+      case "RESPONSE_BYPASS_CODE": {
+        setAdminCodeBypass(data.secretCode);
         break;
       }
 
@@ -764,6 +940,30 @@ export default function App() {
       setIsConnecting(false);
       setError(err.message);
     }
+  };
+
+  const handleUpdateSettings = (isTimed: boolean, timerDuration: number) => {
+    setActiveRoom((prevRoom) => {
+      if (!prevRoom) return null;
+      const updatedRoom = {
+        ...prevRoom,
+        isTimed,
+        timerDuration,
+        updatedAt: Date.now(),
+      };
+
+      if (connRef.current) {
+        try {
+          connRef.current.send({
+            type: "ROOM_STATE",
+            room: updatedRoom,
+          });
+        } catch (e) {
+          console.error("Failed to broadcast settings update:", e);
+        }
+      }
+      return updatedRoom;
+    });
   };
 
   const handleOnlineSetupLock = () => {
@@ -1166,13 +1366,13 @@ export default function App() {
 
       {/* ONLINE LOBBY / MULTIPLAYER CONNECTIONS */}
       {gameMode === "online" && !activeRoom && (
-        <div className="flex flex-col items-center justify-center p-4 min-h-[85vh]">
+        <div className="flex flex-col items-center justify-center p-3 sm:p-4 min-h-[85vh]">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-md bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md"
+            className="w-full max-w-md bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl backdrop-blur-md"
           >
-            <div className="flex items-center gap-2 mb-6 pb-3 border-b border-slate-800">
+            <div className="flex items-center gap-2 mb-4 sm:mb-6 pb-3 border-b border-slate-800">
               <ArrowLeft
                 className="w-5 h-5 text-slate-400 hover:text-slate-100 cursor-pointer"
                 onClick={() => {
@@ -1180,28 +1380,28 @@ export default function App() {
                   setGameMode("home");
                 }}
               />
-              <h2 className="text-md font-mono font-bold uppercase tracking-wider text-slate-300">
+              <h2 className="text-sm sm:text-md font-mono font-bold uppercase tracking-wider text-slate-300">
                 ONLINE MULTIPLAYER
               </h2>
             </div>
 
-            <p className="text-xs text-slate-400 font-mono uppercase tracking-tight mb-6">
+            <p className="text-[11px] sm:text-xs text-slate-400 font-mono uppercase tracking-tight mb-4 sm:mb-6">
               Create a co-op room to invite a friend, or enter their room code below.
             </p>
 
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               {/* Host room option */}
               <button
                 onClick={handleCreateOnlineRoom}
-                className="w-full h-12 bg-emerald-950/30 hover:bg-emerald-500 hover:text-slate-950 border border-emerald-500/30 hover:border-emerald-500 rounded-xl font-mono text-sm font-bold tracking-widest text-emerald-400 transition-all duration-300 flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.05)] cursor-pointer"
+                className="w-full h-11 sm:h-12 bg-emerald-950/30 hover:bg-emerald-500 hover:text-slate-950 border border-emerald-500/30 hover:border-emerald-500 rounded-xl font-mono text-xs sm:text-sm font-bold tracking-widest text-emerald-400 transition-all duration-300 flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.05)] cursor-pointer"
               >
                 <Play className="w-4 h-4" />
                 CREATE CO-OP LOBBY
               </button>
 
-              <div className="relative flex py-2 items-center">
+              <div className="relative flex py-1 sm:py-2 items-center">
                 <div className="flex-grow border-t border-slate-800/60"></div>
-                <span className="flex-shrink mx-4 text-slate-600 text-[10px] font-mono tracking-widest uppercase">
+                <span className="flex-shrink mx-3 sm:mx-4 text-slate-600 text-[9px] sm:text-[10px] font-mono tracking-widest uppercase">
                   OR JOIN SESSION
                 </span>
                 <div className="flex-grow border-t border-slate-800/60"></div>
@@ -1209,10 +1409,10 @@ export default function App() {
 
               {/* Join input option */}
               <div className="space-y-2">
-                <label className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest block">
+                <label className="text-[9px] sm:text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest block">
                   ROOM ACCESS CODE OR MATCH LINK
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <input
                     type="text"
                     value={roomCodeInput}
@@ -1233,12 +1433,12 @@ export default function App() {
                       }
                     }}
                     placeholder="E.G. KXYZ"
-                    className="flex-1 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl px-4 text-center font-mono font-bold tracking-widest text-lg text-emerald-400 uppercase focus:outline-none placeholder:text-slate-800"
+                    className="w-full h-11 sm:h-12 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl px-4 text-center font-mono font-bold tracking-widest text-md sm:text-lg text-emerald-400 uppercase focus:outline-none placeholder:text-slate-800"
                     maxLength={300}
                   />
                   <button
                     onClick={() => handleJoinOnlineRoom()}
-                    className="px-6 bg-slate-800 hover:bg-slate-700 border border-slate-700/80 rounded-xl font-mono text-xs font-bold text-slate-200 uppercase tracking-wider transition-all cursor-pointer"
+                    className="w-full sm:w-auto h-11 sm:h-12 px-6 bg-slate-800 hover:bg-slate-700 border border-slate-700/80 rounded-xl font-mono text-xs font-bold text-slate-200 uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center"
                   >
                     JOIN
                   </button>
@@ -1314,6 +1514,7 @@ export default function App() {
           room={activeRoom}
           playerId={playerId}
           onLeave={handleOnlineLeave}
+          onUpdateSettings={handleUpdateSettings}
         />
       )}
 
@@ -1336,17 +1537,27 @@ export default function App() {
 
             <div className="flex items-center justify-between sm:justify-end gap-3 font-mono text-xs">
               {activeRoom.status === "playing" && (
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-500">TURN STATE:</span>
-                  {activeRoom.turn === playerId ? (
-                    <span className="text-emerald-400 font-bold animate-pulse uppercase tracking-wider">
-                      ★ YOUR TERMINAL ACTIVE
-                    </span>
-                  ) : (
-                    <span className="text-amber-500 font-bold uppercase tracking-wider">
-                      OPPONENT TRANSMITTING...
-                    </span>
+                <div className="flex items-center gap-3">
+                  {activeRoom.isTimed && (
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-950 border border-rose-900/40 rounded-lg">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                      <span className="text-rose-400 font-bold font-mono">
+                        {timeLeft}s
+                      </span>
+                    </div>
                   )}
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500">TURN STATE:</span>
+                    {activeRoom.turn === playerId ? (
+                      <span className="text-emerald-400 font-bold animate-pulse uppercase tracking-wider">
+                        ★ YOUR TERMINAL ACTIVE
+                      </span>
+                    ) : (
+                      <span className="text-amber-500 font-bold uppercase tracking-wider">
+                        OPPONENT TRANSMITTING...
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
               <button
@@ -2090,6 +2301,46 @@ export default function App() {
               <p className="font-mono text-[10px] text-slate-500 uppercase mt-2">
                 Connecting to codebreaker coordinates
               </p>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ADMIN BYPASS MODAL */}
+      <AnimatePresence>
+        {adminCodeBypass && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              className="bg-slate-900 border border-amber-500/30 p-6 rounded-2xl max-w-xs w-full text-center shadow-[0_0_20px_rgba(245,158,11,0.15)] flex flex-col items-center"
+            >
+              <div className="w-12 h-12 bg-amber-950/60 border border-amber-500 rounded-full flex items-center justify-center text-amber-500 mb-4 text-lg">
+                👁️‍🗨️
+              </div>
+              <h3 className="font-mono text-xs font-bold text-amber-500 uppercase tracking-widest">
+                ADMIN ACCESS BYPASS
+              </h3>
+              <p className="font-mono text-[10px] text-slate-400 uppercase mt-2">
+                CRACKED OPPONENT CODE
+              </p>
+              <div className="my-4 px-6 py-2.5 bg-slate-950 border border-slate-800 rounded-xl">
+                <span className="font-mono text-2xl font-bold tracking-widest text-emerald-400">
+                  {adminCodeBypass}
+                </span>
+              </div>
+              <button
+                onClick={() => setAdminCodeBypass(null)}
+                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-mono text-[10px] font-bold uppercase rounded-lg border border-slate-700 cursor-pointer"
+              >
+                DISMISS TERMINAL
+              </button>
             </motion.div>
           </motion.div>
         )}

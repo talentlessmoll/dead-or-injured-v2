@@ -36,7 +36,7 @@ export default function MainMenu({
         className="text-center mb-8 max-w-md w-full"
       >
         <div className="inline-flex items-center gap-2 px-3 py-1 bg-slate-900 border border-slate-800 rounded-full text-emerald-400 text-xs font-mono mb-4 tracking-wider">
-          <Terminal className="w-3 h-3 animate-pulse" /> SYSTEM: OPERATIONAL
+          <Terminal className="w-3 h-3 animate-pulse" /> READY TO PLAY
         </div>
         <h1 className="text-4xl md:text-5xl font-display font-bold text-slate-100 tracking-tight leading-none">
           DEAD OR <span className="text-emerald-400 font-mono">INJURED</span>

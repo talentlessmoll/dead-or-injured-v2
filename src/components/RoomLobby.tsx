@@ -1,5 +1,5 @@
 import { GameRoom } from "../types";
-import { Copy, Share2, Users, RefreshCw, LogOut, ShieldAlert, Check } from "lucide-react";
+import { Copy, Share2, Users, RefreshCw, LogOut, ShieldAlert, Check, Clock, Settings } from "lucide-react";
 import { useState, useEffect } from "react";
 import QRCode from "qrcode";
 
@@ -7,9 +7,10 @@ interface RoomLobbyProps {
   room: GameRoom;
   playerId: string;
   onLeave: () => void;
+  onUpdateSettings?: (isTimed: boolean, duration: number) => void;
 }
 
-export default function RoomLobby({ room, playerId, onLeave }: RoomLobbyProps) {
+export default function RoomLobby({ room, playerId, onLeave, onUpdateSettings }: RoomLobbyProps) {
   const [copied, setCopied] = useState(false);
   const [shared, setShared] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>("");
@@ -110,6 +111,86 @@ export default function RoomLobby({ room, playerId, onLeave }: RoomLobbyProps) {
           <p className="text-[10px] font-mono text-slate-400 max-w-xs px-6 uppercase tracking-tight leading-normal">
             SCAN OR SHARE THE LINK BELOW TO BRING YOUR OPPONENT INTO THE MATCH
           </p>
+        </div>
+
+        {/* Match Configuration */}
+        <div className="bg-slate-950/40 border border-slate-900 rounded-xl p-4 mb-6">
+          <h3 className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-1.5">
+            <Settings className="w-3.5 h-3.5 text-emerald-400" />
+            MATCH CONFIGURATION
+          </h3>
+
+          {room.players[0]?.id === playerId ? (
+            <div className="space-y-4">
+              <div className="flex gap-2 p-1 bg-slate-950 border border-slate-800 rounded-lg">
+                <button
+                  type="button"
+                  onClick={() => onUpdateSettings?.(false, room.timerDuration ?? 60)}
+                  className={`flex-1 py-1.5 rounded-md font-mono text-[11px] font-bold uppercase transition-all cursor-pointer ${
+                    !(room.isTimed ?? false)
+                      ? "bg-emerald-500 text-slate-950"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                  }`}
+                >
+                  Untimed (Unlimited)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdateSettings?.(true, room.timerDuration ?? 60)}
+                  className={`flex-1 py-1.5 rounded-md font-mono text-[11px] font-bold uppercase transition-all cursor-pointer ${
+                    (room.isTimed ?? false)
+                      ? "bg-emerald-500 text-slate-950"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                  }`}
+                >
+                  Timed Guess
+                </button>
+              </div>
+
+              {(room.isTimed ?? false) && (
+                <div className="space-y-2">
+                  <label className="text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wider block">
+                    TIME PER TURN
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { label: "30s", val: 30 },
+                      { label: "1 Min", val: 60 },
+                      { label: "2 Min", val: 120 },
+                      { label: "3 Min", val: 180 },
+                      { label: "4 Min", val: 240 },
+                      { label: "5 Min", val: 300 },
+                    ].map((opt) => (
+                      <button
+                        key={opt.val}
+                        type="button"
+                        onClick={() => onUpdateSettings?.(true, opt.val)}
+                        className={`py-1 rounded border font-mono text-[10px] font-medium transition-all cursor-pointer ${
+                          (room.timerDuration ?? 60) === opt.val
+                            ? "bg-emerald-950/50 border-emerald-500 text-emerald-400"
+                            : "bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 p-3 bg-slate-950/60 border border-slate-900 rounded-lg">
+              <Clock className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div>
+                <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider block">
+                  GAME RULES
+                </span>
+                <span className="text-xs font-mono text-slate-200 font-bold uppercase">
+                  {(room.isTimed ?? false) ? `TIMED (${(room.timerDuration ?? 60) >= 60 ? `${(room.timerDuration ?? 60) / 60}m` : `${room.timerDuration ?? 60}s`} PER TURN)` : "UNTIMED (UNLIMITED TIME)"}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Connected Users Status */}

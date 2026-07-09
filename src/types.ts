@@ -22,6 +22,9 @@ export interface GameRoom {
   turn: string | null; // Player ID of whose turn it is
   winnerId: string | null;
   updatedAt: number;
+  isTimed?: boolean;
+  timerDuration?: number; // in seconds
+  missedTurnsCount?: Record<string, number>;
 }
 
 export interface ScratchpadState {
