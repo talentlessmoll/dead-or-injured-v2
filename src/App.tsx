@@ -59,6 +59,16 @@ function generatePlayerId(): string {
   return "p_" + Math.random().toString(36).substring(2, 11);
 }
 
+// Robust JSON decoder to avoid crash on non-JSON HTML/empty responses
+async function safeParseJson<T = any>(response: Response): Promise<T> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch (e) {
+    throw new Error(`Invalid server response (Status ${response.status}).`);
+  }
+}
+
 // Initial state for Scratchpad
 const initialScratchpad = (): ScratchpadState => ({
   eliminated: Array(10).fill(false),
@@ -175,9 +185,9 @@ export default function App() {
         setRoomCodeInput(code);
         setIsConnecting(true);
         fetch(`/api/wifi/rooms/${code}`)
-          .then((res) => {
-            if (!res.ok) throw new Error("WiFi lobby not found");
-            return res.json();
+          .then(async (res) => {
+            if (!res.ok) throw new Error("Local WiFi lobby not found. It may have expired or closed.");
+            return safeParseJson(res);
           })
           .then((data) => {
             setIsConnecting(false);
@@ -201,7 +211,10 @@ export default function App() {
     if (gameMode === "wifi") {
       setIsIpScanning(true);
       fetch("/api/ip")
-        .then((res) => res.json())
+        .then(async (res) => {
+          if (!res.ok) throw new Error("Could not retrieve network IP");
+          return safeParseJson(res);
+        })
         .then((data) => {
           setIsIpScanning(false);
           if (data && data.ip) {
@@ -1050,7 +1063,7 @@ export default function App() {
       if (!response.ok) {
         throw new Error("Failed to scan WiFi networks");
       }
-      const data = await response.json();
+      const data = await safeParseJson(response);
 
       // Scan Sweep progress bar animation
       const duration = 1200; // 1.2s sweep
@@ -1133,11 +1146,15 @@ export default function App() {
       });
 
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Failed to host WiFi lobby on network");
+        let errMsg = "Failed to host WiFi lobby on network";
+        try {
+          const errData = await safeParseJson(response);
+          errMsg = errData.error || errMsg;
+        } catch (e) {}
+        throw new Error(errMsg);
       }
 
-      const registeredRoom: GameRoom = await response.json();
+      const registeredRoom: GameRoom = await safeParseJson<GameRoom>(response);
 
       peerRef.current = boundPeer;
       setIsHost(true);
@@ -1332,9 +1349,9 @@ export default function App() {
       setIsConnecting(true);
       setError(null);
       fetch(`/api/wifi/rooms/${code}`)
-        .then((res) => {
+        .then(async (res) => {
           if (!res.ok) throw new Error("Local WiFi lobby not found. It may have expired or closed.");
-          return res.json();
+          return safeParseJson(res);
         })
         .then((data) => {
           setIsConnecting(false);
