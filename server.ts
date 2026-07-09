@@ -146,6 +146,15 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // Get Client IP
+  app.get("/api/ip", (req, res) => {
+    let clientIp = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
+    if (clientIp.includes(",")) {
+      clientIp = clientIp.split(",")[0].trim();
+    }
+    res.json({ ip: clientIp });
+  });
+
   // Health check
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", activeRooms: rooms.size });

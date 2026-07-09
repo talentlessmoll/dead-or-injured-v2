@@ -200,7 +200,7 @@ export default function App() {
   useEffect(() => {
     if (gameMode === "wifi") {
       setIsIpScanning(true);
-      fetch("https://api.ipify.org?format=json")
+      fetch("/api/ip")
         .then((res) => res.json())
         .then((data) => {
           setIsIpScanning(false);
@@ -1108,8 +1108,8 @@ export default function App() {
       setIsConnecting(true);
       cleanupPeerConnection();
 
-      // Create a case-sensitive, unique Peer ID using player ID to prevent collisions
-      const hostPeerId = `doi-wifi-${playerId}`;
+      // Create a case-sensitive, unique Peer ID using player ID and random suffix to prevent collisions
+      const hostPeerId = `doi-wifi-${playerId}-${Math.random().toString(36).substring(2, 6)}`;
       const boundPeer = new Peer(hostPeerId);
 
       // Wait for Peer to register on the public PeerJS server
@@ -1299,7 +1299,7 @@ export default function App() {
       return;
     }
 
-    // Extract the actual 4-6 character room code if a full URL or query was provided
+    // Extract the actual 4-12 character room code if a full URL or query was provided
     let code = rawCode;
     if (rawCode.includes("?ROOM=")) {
       const parts = rawCode.split("?ROOM=");
@@ -1319,15 +1319,40 @@ export default function App() {
           code = roomParam.toUpperCase();
         }
       } catch (e) {
-        // Fallback: search for room code pattern in URL
-        const match = rawCode.match(/ROOM=([A-Z0-9]+)/);
+        // Fallback: search for room code pattern in URL (allow hyphen for WIFI rooms)
+        const match = rawCode.match(/ROOM=([A-Z0-9\-]+)/);
         if (match && match[1]) {
           code = match[1];
         }
       }
     }
 
-    // Remove any non-alphanumeric characters
+    // Check if it is a local WiFi room code BEFORE stripping out non-alphanumerics like hyphens
+    if (code.startsWith("WIFI-")) {
+      setIsConnecting(true);
+      setError(null);
+      fetch(`/api/wifi/rooms/${code}`)
+        .then((res) => {
+          if (!res.ok) throw new Error("Local WiFi lobby not found. It may have expired or closed.");
+          return res.json();
+        })
+        .then((data) => {
+          setIsConnecting(false);
+          if (data && data.hostPeerId) {
+            setGameMode("wifi");
+            handleJoinOnlineRoom(data.hostPeerId);
+          } else {
+            throw new Error("No broadcast details returned by network.");
+          }
+        })
+        .catch((e) => {
+          setIsConnecting(false);
+          setError(e.message || "Failed to locate local host beacon.");
+        });
+      return;
+    }
+
+    // Remove any non-alphanumeric characters for standard online matches
     code = code.replace(/[^A-Z0-9]/g, "");
 
     if (!code || code.length < 3 || code.startsWith("HTTP")) {
