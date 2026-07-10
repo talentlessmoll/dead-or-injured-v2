@@ -859,18 +859,24 @@ export default function AdminConsole({
     const playersMap = new Map<string, { id: string; name: string }>();
     
     // Include current player
-    playersMap.set(playerId, { id: playerId, name: localStorage.getItem("doi_player_name") || "YOU" });
+    if (playerId) {
+      playersMap.set(playerId, { id: playerId, name: localStorage.getItem("doi_player_name") || "YOU" });
+    }
 
-    dbRecords.forEach((r) => {
-      if (r.player1Id) {
-        playersMap.set(r.player1Id, { id: r.player1Id, name: r.player1Name });
-      }
-      if (r.player2Id) {
-        playersMap.set(r.player2Id, { id: r.player2Id, name: r.player2Name });
-      }
-    });
+    if (Array.isArray(dbRecords)) {
+      dbRecords.forEach((r) => {
+        if (r && r.player1Id) {
+          playersMap.set(r.player1Id, { id: r.player1Id, name: r.player1Name || "UNKNOWN" });
+        }
+        if (r && r.player2Id) {
+          playersMap.set(r.player2Id, { id: r.player2Id, name: r.player2Name || "UNKNOWN" });
+        }
+      });
+    }
 
-    return Array.from(playersMap.values()).filter(p => p.id !== "p1" && p.id !== "p2" && p.id !== "ai" && !dbDeletedIds.includes(p.id));
+    const deletedIds = Array.isArray(dbDeletedIds) ? dbDeletedIds : [];
+
+    return Array.from(playersMap.values()).filter(p => p && p.id && p.id !== "p1" && p.id !== "p2" && p.id !== "ai" && !deletedIds.includes(p.id));
   }, [dbRecords, dbDeletedIds, playerId]);
 
   const handleCommandClick = (cmdItem: typeof commandCategories[0]["commands"][0]) => {
@@ -1187,7 +1193,7 @@ export default function AdminConsole({
                   </div>
 
                   <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-                    {dbRecords.length === 0 ? (
+                    {(!Array.isArray(dbRecords) || dbRecords.length === 0) ? (
                       <div className="h-full flex items-center justify-center p-8">
                         <p className="font-mono text-[10px] text-slate-600 uppercase tracking-widest text-center">
                           NO HISTORICAL GAME RECORDS ON FILE
@@ -1195,23 +1201,31 @@ export default function AdminConsole({
                       </div>
                     ) : (
                       dbRecords.map((r) => {
+                        if (!r) return null;
                         const isEditing = editingRecordId === r.matchId;
-                        const formattedDate = new Date(r.timestamp).toLocaleDateString(undefined, {
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        });
+                        let formattedDate = "UNKNOWN DATE";
+                        if (r.timestamp) {
+                          try {
+                            formattedDate = new Date(r.timestamp).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            });
+                          } catch (e) {
+                            console.error("Failed to format date:", e);
+                          }
+                        }
 
                         return (
                           <div
-                            key={r.matchId}
+                            key={r.matchId || Math.random().toString()}
                             className="bg-slate-950/80 border border-slate-800/60 rounded-lg p-3 flex flex-col gap-2 hover:border-slate-800 transition-colors"
                           >
                             {isEditing ? (
                               <div className="flex flex-col gap-2.5">
                                 <span className="font-mono text-[8px] text-slate-500 uppercase">
-                                  MATCH: {r.matchId} • {r.gameMode.toUpperCase()}
+                                  MATCH: {r.matchId || "UNKNOWN"} • {(r.gameMode || "UNKNOWN").toUpperCase()}
                                 </span>
                                 
                                 <div className="grid grid-cols-2 gap-2">
@@ -1291,24 +1305,24 @@ export default function AdminConsole({
                                     </span>
                                   </div>
                                   <div className="font-mono text-[11px] font-bold text-slate-300 uppercase tracking-wide mt-1">
-                                    {r.player1Name} vs {r.player2Name}
+                                    {r.player1Name || "UNKNOWN"} vs {r.player2Name || "UNKNOWN"}
                                   </div>
                                   <div className="font-mono text-[9px] text-slate-400 mt-1 uppercase">
-                                    Result: <span className="text-emerald-400 font-semibold">{r.winnerName ? `${r.winnerName} won` : "Draw"}</span> • {r.turnsUsed} turns
+                                    Result: <span className="text-emerald-400 font-semibold">{r.winnerName ? `${r.winnerName} won` : "Draw"}</span> • {r.turnsUsed || 0} turns
                                   </div>
                                   <span className="font-mono text-[7px] text-slate-600 block mt-1 select-all">
-                                    MATCH ID: {r.matchId}
+                                    MATCH ID: {r.matchId || "UNKNOWN"}
                                   </span>
                                 </div>
 
                                 <div className="flex items-center gap-1 shrink-0">
                                   <button
                                     onClick={() => {
-                                      setEditingRecordId(r.matchId);
-                                      setEditP1Name(r.player1Name);
-                                      setEditP2Name(r.player2Name);
+                                      setEditingRecordId(r.matchId || "");
+                                      setEditP1Name(r.player1Name || "");
+                                      setEditP2Name(r.player2Name || "");
                                       setEditWinnerName(r.winnerName || "");
-                                      setEditTurns(r.turnsUsed);
+                                      setEditTurns(r.turnsUsed || 0);
                                     }}
                                     className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-900 rounded border border-transparent hover:border-slate-800 transition-all cursor-pointer"
                                     title="Edit match recaps"

@@ -141,7 +141,9 @@ export function getLocalLeaderboard(): LeaderboardRecord[] {
   try {
     const raw = localStorage.getItem("doi_leaderboard");
     if (!raw) return [];
-    return JSON.parse(raw) as LeaderboardRecord[];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as LeaderboardRecord[];
   } catch (e) {
     console.error("Failed to parse local leaderboard:", e);
     return [];
@@ -220,7 +222,9 @@ export function getDeletedPlayerIds(): string[] {
   try {
     const raw = localStorage.getItem("doi_deleted_player_ids");
     if (!raw) return [];
-    return JSON.parse(raw) as string[];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as string[];
   } catch (e) {
     console.error("Failed to parse deleted player IDs:", e);
     return [];
