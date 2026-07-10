@@ -29,6 +29,11 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  app.use((req, res, next) => {
+    console.log(`[HTTP] ${req.method} ${req.url} (Headers: ${JSON.stringify(req.headers)})`);
+    next();
+  });
+
   app.use(express.json());
 
   // In-memory room store

@@ -1059,35 +1059,115 @@ export default function App() {
     setError(null);
 
     try {
-      const response = await fetch("/api/wifi/lobbies");
-      if (!response.ok) {
-        throw new Error("Failed to scan WiFi networks");
-      }
-      const data = await safeParseJson(response);
+      let mapped: any[] = [];
+      try {
+        const response = await fetch("/api/wifi/lobbies");
+        if (!response.ok) {
+          throw new Error("Failed to scan WiFi networks");
+        }
+        const data = await safeParseJson(response);
 
-      // Scan Sweep progress bar animation
-      const duration = 1200; // 1.2s sweep
-      const startTime = Date.now();
-      await new Promise<void>((resolve) => {
-        const interval = setInterval(() => {
-          const elapsed = Date.now() - startTime;
-          const progress = Math.min(Math.round((elapsed / duration) * 100), 100);
-          setWifiScanProgress(progress);
-          if (progress >= 100) {
-            clearInterval(interval);
-            resolve();
+        // Scan Sweep progress bar animation
+        const duration = 1200; // 1.2s sweep
+        const startTime = Date.now();
+        await new Promise<void>((resolve) => {
+          const interval = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(Math.round((elapsed / duration) * 100), 100);
+            setWifiScanProgress(progress);
+            if (progress >= 100) {
+              clearInterval(interval);
+              resolve();
+            }
+          }, 50);
+        });
+
+        mapped = data.map((lobby: any, i: number) => ({
+          peerId: lobby.hostPeerId, // Connecting via PeerJS to this unique ID!
+          hostName: lobby.hostName,
+          hostId: lobby.hostId,
+          status: "waiting",
+          slotIndex: i + 1,
+          pingMs: Math.floor(Math.random() * 20) + 4, // Low LAN-like latency
+        }));
+      } catch (serverErr) {
+        console.warn("Server-side lobbies scan failed, falling back to decentralized PeerJS slot-scanning:", serverErr);
+        
+        // Slot scan fallback
+        const scanner = new Peer();
+        const tempLobbies: any[] = [];
+
+        // Wait for scanner to be ready
+        await new Promise<void>((resolve) => {
+          scanner.on("open", () => resolve());
+          scanner.on("error", () => resolve());
+          setTimeout(() => resolve(), 1500);
+        });
+
+        const cleanSsid = wifiSsid.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+        const MAX_WIFI_SLOTS = 4;
+
+        for (let i = 0; i < MAX_WIFI_SLOTS; i++) {
+          setWifiScanProgress(Math.round((i / MAX_WIFI_SLOTS) * 100));
+          const slotId = `doi-wifi-${cleanSsid}-${i}`;
+          
+          const startTime = Date.now();
+          const result = await new Promise<any>((resolve) => {
+            let conn: any = null;
+            const timeout = setTimeout(() => {
+              if (conn) conn.close();
+              resolve(null);
+            }, 1000);
+
+            try {
+              conn = scanner.connect(slotId);
+              
+              conn.on("open", () => {
+                conn.send({
+                  type: "WIFI_PING",
+                  playerId,
+                  playerName: playerName.trim().slice(0, 16),
+                });
+              });
+
+              conn.on("data", (data: any) => {
+                if (data && data.type === "WIFI_PONG") {
+                  clearTimeout(timeout);
+                  const pingMs = Date.now() - startTime;
+                  conn.close();
+                  resolve({
+                    peerId: slotId,
+                    hostName: data.hostName,
+                    hostId: data.hostId,
+                    status: data.status,
+                    slotIndex: i + 1,
+                    pingMs,
+                  });
+                }
+              });
+
+              conn.on("error", () => {
+                clearTimeout(timeout);
+                resolve(null);
+              });
+            } catch (err) {
+              clearTimeout(timeout);
+              resolve(null);
+            }
+          });
+
+          if (result) {
+            tempLobbies.push(result);
+            setWifiScannedLobbies([...tempLobbies]);
           }
-        }, 50);
-      });
+        }
 
-      const mapped = data.map((lobby: any, i: number) => ({
-        peerId: lobby.hostPeerId, // Connecting via PeerJS to this unique ID!
-        hostName: lobby.hostName,
-        hostId: lobby.hostId,
-        status: "waiting",
-        slotIndex: i + 1,
-        pingMs: Math.floor(Math.random() * 20) + 4, // Low LAN-like latency
-      }));
+        setWifiScanProgress(100);
+        try {
+          scanner.destroy();
+        } catch (err) {}
+        return;
+      }
 
       setWifiScannedLobbies(mapped);
     } catch (e: any) {
@@ -1134,65 +1214,185 @@ export default function App() {
 
       // Register this lobby with our lightweight discoverability coordinator
       const cleanSsid = wifiSsid.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-      const response = await fetch("/api/wifi/host", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          playerId,
-          name: playerName.trim().slice(0, 16),
-          hostPeerId,
-          wifiSsid: cleanSsid,
-        }),
-      });
+      let registeredRoom: GameRoom | null = null;
+      let usingServerFallback = false;
 
-      if (!response.ok) {
-        let errMsg = "Failed to host WiFi lobby on network";
-        try {
-          const errData = await safeParseJson(response);
-          errMsg = errData.error || errMsg;
-        } catch (e) {}
-        throw new Error(errMsg);
+      try {
+        const response = await fetch("/api/wifi/host", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            playerId,
+            name: playerName.trim().slice(0, 16),
+            hostPeerId,
+            wifiSsid: cleanSsid,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Server hosting endpoint failed");
+        }
+        registeredRoom = await safeParseJson<GameRoom>(response);
+      } catch (err) {
+        console.warn("Server-side coordinator unavailable, falling back to client-side PeerJS slot allocation:", err);
+        usingServerFallback = true;
       }
 
-      const registeredRoom: GameRoom = await safeParseJson<GameRoom>(response);
+      if (usingServerFallback) {
+        // Destroy our temporary boundPeer with the random suffix
+        try {
+          boundPeer.destroy();
+        } catch (e) {}
 
-      peerRef.current = boundPeer;
-      setIsHost(true);
-      setWifiDiscoverableActive(true);
-      setIsConnecting(false);
+        // Look for a free slot among 0..3 using slot IDs: doi-wifi-${cleanSsid}-${i}
+        let finalBoundPeer: Peer | null = null;
+        let boundSlotIndex = -1;
+        const MAX_WIFI_SLOTS = 4;
 
-      setActiveRoom(registeredRoom);
-      setDraftCode("");
-      setOnlineScratch(initialScratchpad());
+        for (let i = 0; i < MAX_WIFI_SLOTS; i++) {
+          const slotId = `doi-wifi-${cleanSsid}-${i}`;
+          const isFree = await new Promise<boolean>((resolve) => {
+            const testPeer = new Peer(slotId);
+            testPeer.on("open", () => {
+              finalBoundPeer = testPeer;
+              boundSlotIndex = i;
+              resolve(true);
+            });
+            testPeer.on("error", () => {
+              testPeer.destroy();
+              resolve(false);
+            });
+            setTimeout(() => {
+              testPeer.destroy();
+              resolve(false);
+            }, 1200);
+          });
 
-      boundPeer.on("connection", (conn) => {
-        connRef.current = conn;
-        setupConnectionListeners(conn, true, registeredRoom.roomId);
+          if (isFree) {
+            break;
+          }
+        }
 
-        conn.on("open", () => {
-          conn.send({
-            type: "SYNC",
-            room: {
-              ...registeredRoom,
-              players: [
-                ...registeredRoom.players,
-                { id: "GUEST_STUB", name: "Connecting guest...", secretCode: null }
-              ]
+        if (!finalBoundPeer) {
+          setIsConnecting(false);
+          setError("All local slots are occupied. Try a different SSID name.");
+          return;
+        }
+
+        peerRef.current = finalBoundPeer;
+        setIsHost(true);
+        setWifiDiscoverableActive(true);
+        setIsConnecting(false);
+
+        const fallbackRoom: GameRoom = {
+          roomId: `WIFI-${cleanSsid}-${boundSlotIndex}`,
+          players: [{ id: playerId, name: playerName.trim().slice(0, 16), secretCode: null }],
+          guesses: [],
+          status: "waiting",
+          turn: null,
+          winnerId: null,
+          updatedAt: Date.now(),
+          isWifi: true,
+        };
+
+        setActiveRoom(fallbackRoom);
+        setDraftCode("");
+        setOnlineScratch(initialScratchpad());
+
+        (finalBoundPeer as Peer).on("connection", (conn) => {
+          connRef.current = conn;
+          setupConnectionListeners(conn, true, fallbackRoom.roomId);
+
+          conn.on("open", () => {
+            conn.send({
+              type: "SYNC",
+              room: {
+                ...fallbackRoom,
+                players: [
+                  ...fallbackRoom.players,
+                  { id: "GUEST_STUB", name: "Connecting guest...", secretCode: null }
+                ]
+              }
+            });
+          });
+
+          conn.on("data", (data: any) => {
+            if (data && data.type === "WIFI_PING") {
+              try {
+                conn.send({
+                  type: "WIFI_PONG",
+                  hostName: playerName.trim().slice(0, 16),
+                  hostId: playerId,
+                  status: "waiting",
+                });
+              } catch (e) {}
+              return;
             }
+            handleIncomingData(data, true, fallbackRoom.roomId, conn);
           });
         });
 
-        conn.on("data", (data: any) => {
-          handleIncomingData(data, true, registeredRoom.roomId, conn);
+        (finalBoundPeer as Peer).on("error", (err: any) => {
+          console.error("WiFi Host PeerJS error:", err);
+          setError(`Channel interference: ${err.message || err.type}`);
+          setWifiDiscoverableActive(false);
+          cleanupPeerConnection();
         });
-      });
 
-      boundPeer.on("error", (err: any) => {
-        console.error("WiFi Host PeerJS error:", err);
-        setError(`Channel interference: ${err.message || err.type}`);
-        setWifiDiscoverableActive(false);
-        cleanupPeerConnection();
-      });
+        return;
+      }
+
+      // If registered successfully via backend coordinator
+      if (registeredRoom) {
+        peerRef.current = boundPeer;
+        setIsHost(true);
+        setWifiDiscoverableActive(true);
+        setIsConnecting(false);
+
+        setActiveRoom(registeredRoom);
+        setDraftCode("");
+        setOnlineScratch(initialScratchpad());
+
+        boundPeer.on("connection", (conn) => {
+          connRef.current = conn;
+          setupConnectionListeners(conn, true, registeredRoom!.roomId);
+
+          conn.on("open", () => {
+            conn.send({
+              type: "SYNC",
+              room: {
+                ...registeredRoom!,
+                players: [
+                  ...registeredRoom!.players,
+                  { id: "GUEST_STUB", name: "Connecting guest...", secretCode: null }
+                ]
+              }
+            });
+          });
+
+          conn.on("data", (data: any) => {
+            if (data && data.type === "WIFI_PING") {
+              try {
+                conn.send({
+                  type: "WIFI_PONG",
+                  hostName: playerName.trim().slice(0, 16),
+                  hostId: playerId,
+                  status: "waiting",
+                });
+              } catch (e) {}
+              return;
+            }
+            handleIncomingData(data, true, registeredRoom!.roomId, conn);
+          });
+        });
+
+        boundPeer.on("error", (err: any) => {
+          console.error("WiFi Host PeerJS error:", err);
+          setError(`Channel interference: ${err.message || err.type}`);
+          setWifiDiscoverableActive(false);
+          cleanupPeerConnection();
+        });
+      }
 
     } catch (e: any) {
       setIsConnecting(false);
