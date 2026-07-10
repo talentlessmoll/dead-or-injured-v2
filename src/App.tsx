@@ -329,6 +329,11 @@ export default function App() {
     const trimmedName = name.trim().slice(0, 16);
     if (!trimmedName || trimmedName.toLowerCase() === "guesser") return;
 
+    if (playerName && trimmedName.toLowerCase() !== playerName.toLowerCase()) {
+      setIsConsoleUnlocked(false);
+      localStorage.setItem("doi_sys_console_unlocked", "false");
+    }
+
     setPlayerName(trimmedName);
     localStorage.setItem("doi_player_name", trimmedName);
     setShowNameSetup(false);
