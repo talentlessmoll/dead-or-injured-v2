@@ -186,18 +186,27 @@ export default function App() {
         setIsConnecting(true);
         fetch(`/api/wifi/rooms/${code}`)
           .then(async (res) => {
-            if (!res.ok) throw new Error("Local WiFi lobby not found. It may have expired or closed.");
+            if (!res.ok) {
+              // Try slot fallback parsing if the server lookup fails
+              const slotMatch = code.match(/^WIFI-([A-Z0-9_]+)-(\d+)$/i);
+              if (slotMatch) {
+                return { hostPeerId: `doi-wifi-${slotMatch[1].toUpperCase()}-${slotMatch[2]}` };
+              }
+              throw new Error("Local WiFi lobby not found. It may have expired or closed.");
+            }
             return safeParseJson(res);
           })
           .then((data) => {
             setIsConnecting(false);
             if (data && data.hostPeerId) {
               handleJoinOnlineRoom(data.hostPeerId);
+            } else {
+              throw new Error("No broadcast details returned by network.");
             }
           })
-          .catch((e) => {
+          .catch((e: any) => {
             setIsConnecting(false);
-            setError("Failed to locate local host beacon. Make sure the host is broadcasting.");
+            setError(e.message || "Failed to locate local host beacon. Make sure the host is broadcasting.");
           });
       } else {
         setGameMode("online");
@@ -1544,13 +1553,23 @@ export default function App() {
       }
     }
 
-    // Check if it is a local WiFi room code BEFORE stripping out non-alphanumerics like hyphens
-    if (code.startsWith("WIFI-")) {
+    // Support both WIFI- prefixed codes and raw codes if currently in wifi mode
+    const isWiFiModeInput = code.startsWith("WIFI-") || (gameMode === "wifi" && code.length >= 3);
+
+    if (isWiFiModeInput) {
+      const fullWifiCode = code.startsWith("WIFI-") ? code : `WIFI-${code}`;
       setIsConnecting(true);
       setError(null);
-      fetch(`/api/wifi/rooms/${code}`)
+      fetch(`/api/wifi/rooms/${fullWifiCode}`)
         .then(async (res) => {
-          if (!res.ok) throw new Error("Local WiFi lobby not found. It may have expired or closed.");
+          if (!res.ok) {
+            // Check if it is a slot-based decentralized fallback format
+            const slotMatch = fullWifiCode.match(/^WIFI-([A-Z0-9_]+)-(\d+)$/i);
+            if (slotMatch) {
+              return { hostPeerId: `doi-wifi-${slotMatch[1].toUpperCase()}-${slotMatch[2]}` };
+            }
+            throw new Error("Local WiFi lobby not found. It may have expired or closed.");
+          }
           return safeParseJson(res);
         })
         .then((data) => {
@@ -1562,9 +1581,19 @@ export default function App() {
             throw new Error("No broadcast details returned by network.");
           }
         })
-        .catch((e) => {
-          setIsConnecting(false);
-          setError(e.message || "Failed to locate local host beacon.");
+        .catch((e: any) => {
+          // If the user typed a 4-letter code in WiFi mode but it wasn't found as a WiFi room,
+          // maybe they meant to join a standard online room? Let's check!
+          const stripped = code.replace(/[^A-Z0-9]/g, "");
+          if (stripped.length === 4 && !code.startsWith("WIFI-")) {
+            setIsConnecting(false);
+            setGameMode("online");
+            setRoomCodeInput(stripped);
+            setTimeout(() => handleJoinOnlineRoom(stripped), 50);
+          } else {
+            setIsConnecting(false);
+            setError(e.message || "Failed to locate local host beacon.");
+          }
         });
       return;
     }

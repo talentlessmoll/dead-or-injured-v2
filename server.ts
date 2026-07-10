@@ -25,6 +25,22 @@ function calculateScore(guess: string, secret: string) {
   return { dead, injured };
 }
 
+function normalizeIp(ip: string): string {
+  let cleaned = ip.trim();
+  if (cleaned.includes(",")) {
+    cleaned = cleaned.split(",")[0].trim();
+  }
+  if (
+    cleaned === "::1" ||
+    cleaned === "localhost" ||
+    cleaned.endsWith("127.0.0.1") ||
+    cleaned.startsWith("::ffff:127.0.0.1")
+  ) {
+    return "127.0.0.1";
+  }
+  return cleaned;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -74,10 +90,7 @@ async function startServer() {
       return;
     }
 
-    let clientIp = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
-    if (clientIp.includes(",")) {
-      clientIp = clientIp.split(",")[0].trim();
-    }
+    const clientIp = normalizeIp((req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1");
 
     // Generate a clean room ID with a WIFI- prefix
     const roomId = `WIFI-${generateRoomId()}`;
@@ -100,10 +113,7 @@ async function startServer() {
   });
 
   app.get("/api/wifi/lobbies", (req, res) => {
-    let clientIp = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
-    if (clientIp.includes(",")) {
-      clientIp = clientIp.split(",")[0].trim();
-    }
+    const clientIp = normalizeIp((req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1");
 
     const activeLobbies: any[] = [];
     const now = Date.now();
@@ -130,7 +140,10 @@ async function startServer() {
 
   app.get("/api/wifi/rooms/:roomId", (req, res) => {
     const { roomId } = req.params;
-    const room = rooms.get(roomId.toUpperCase());
+    let room = rooms.get(roomId.toUpperCase());
+    if (!room) {
+      room = rooms.get(`WIFI-${roomId.toUpperCase()}`);
+    }
     if (!room || !room.isWifi) {
       res.status(404).json({ error: "WiFi room not found" });
       return;
@@ -153,10 +166,7 @@ async function startServer() {
 
   // Get Client IP
   app.get("/api/ip", (req, res) => {
-    let clientIp = (req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1";
-    if (clientIp.includes(",")) {
-      clientIp = clientIp.split(",")[0].trim();
-    }
+    const clientIp = normalizeIp((req.headers["x-forwarded-for"] as string) || req.socket.remoteAddress || "127.0.0.1");
     res.json({ ip: clientIp });
   });
 
