@@ -2,17 +2,32 @@ import React, { useState } from "react";
 import { motion } from "motion/react";
 import { Trophy, Users, X, Calendar, Zap, ArrowRight, UserCheck, Bot, BarChart3, Clock } from "lucide-react";
 import { LeaderboardRecord } from "../types";
-import { getLocalLeaderboard, saveLocalLeaderboard } from "../utils";
+import { getLocalLeaderboard, saveLocalLeaderboard, getDeletedPlayerIds } from "../utils";
 
 interface LeaderboardProps {
   onClose: () => void;
   currentPlayerName: string;
   currentPlayerId: string;
   onTapCurrentUser?: () => void;
+  leaderboardVersion?: number;
 }
 
-export default function Leaderboard({ onClose, currentPlayerName, currentPlayerId, onTapCurrentUser }: LeaderboardProps) {
-  const [records, setRecords] = useState<LeaderboardRecord[]>(() => getLocalLeaderboard());
+export default function Leaderboard({ onClose, currentPlayerName, currentPlayerId, onTapCurrentUser, leaderboardVersion = 0 }: LeaderboardProps) {
+  const [records, setRecords] = useState<LeaderboardRecord[]>(() => {
+    const deleted = getDeletedPlayerIds();
+    return getLocalLeaderboard().filter((r) => 
+      !deleted.includes(r.player1Id || "") && 
+      !deleted.includes(r.player2Id || "")
+    );
+  });
+
+  React.useEffect(() => {
+    const deleted = getDeletedPlayerIds();
+    setRecords(getLocalLeaderboard().filter((r) => 
+      !deleted.includes(r.player1Id || "") && 
+      !deleted.includes(r.player2Id || "")
+    ));
+  }, [leaderboardVersion]);
   const [activeTab, setActiveTab] = useState<"rankings" | "history">("rankings");
   const [filterMode, setFilterMode] = useState<"all" | "single" | "local" | "online">("all");
   const [selectedPlayerIdFilter, setSelectedPlayerIdFilter] = useState<string>("all");

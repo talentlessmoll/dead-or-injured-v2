@@ -22,6 +22,7 @@ import {
   QrCode,
   Camera,
   Wifi,
+  MessageSquare,
 } from "lucide-react";
 
 import {
@@ -44,6 +45,8 @@ import {
   saveLocalLeaderboard,
   getAIGuessByPersonality,
   getDeducedCodeWithSmartInference,
+  getDeletedPlayerIds,
+  saveDeletedPlayerIds,
 } from "./utils";
 
 import { AI_PERSONALITIES } from "./aiPersonalities";
@@ -202,6 +205,10 @@ export default function App() {
   const [rematchStatus, setRematchStatus] = useState<"none" | "offered" | "received">("none");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState<string>("");
+  const [unreadChatCount, setUnreadChatCount] = useState<number>(0);
+  const [activeChatNotification, setActiveChatNotification] = useState<ChatMessage | null>(null);
+  const [activeCenterTaunt, setActiveCenterTaunt] = useState<{ id: string; senderName: string; emoji: string } | null>(null);
+  const [leaderboardVersion, setLeaderboardVersion] = useState<number>(0);
   const [timeLeft, setTimeLeft] = useState<number>(60);
   const [adminCodeBypass, setAdminCodeBypass] = useState<string | null>(null);
   const [revealedOpponentSecret, setRevealedOpponentSecret] = useState<string | null>(null);
@@ -230,6 +237,29 @@ export default function App() {
   } | null>(null);
 
   const [initialRoomToJoin, setInitialRoomToJoin] = useState<string | null>(null);
+
+  // Clickable notification auto-dismiss timer
+  useEffect(() => {
+    if (activeChatNotification) {
+      const timer = setTimeout(() => {
+        setActiveChatNotification(null);
+      }, 7000);
+      return () => clearTimeout(timer);
+    }
+  }, [activeChatNotification]);
+
+  const scrollToChat = () => {
+    setUnreadChatCount(0);
+    setActiveChatNotification(null);
+    const element = document.getElementById("match-chat-system");
+    if (element) {
+      element.scrollIntoView({ behavior: "smooth" });
+      element.classList.add("ring-2", "ring-emerald-500");
+      setTimeout(() => {
+        element.classList.remove("ring-2", "ring-emerald-500");
+      }, 2000);
+    }
+  };
 
   // Initialize Player ID and Name from localStorage
   useEffect(() => {
@@ -674,6 +704,7 @@ export default function App() {
           playerId,
           playerName: playerName.trim().slice(0, 16),
           leaderboard: getLocalLeaderboard(),
+          deletedPlayerIds: getDeletedPlayerIds(),
         });
       }
     });
@@ -715,6 +746,13 @@ export default function App() {
             saveLocalLeaderboard(merged);
           }
 
+          // Sync guest's deleted player IDs into host's storage
+          if (data.deletedPlayerIds && Array.isArray(data.deletedPlayerIds)) {
+            const mergedDeleted = Array.from(new Set([...getDeletedPlayerIds(), ...data.deletedPlayerIds]));
+            saveDeletedPlayerIds(mergedDeleted);
+            setLeaderboardVersion((v) => v + 1);
+          }
+
           // Host receives join request
           setActiveRoom((prevRoom) => {
             if (!prevRoom) return null;
@@ -741,6 +779,7 @@ export default function App() {
                 type: "ROOM_STATE",
                 room: updatedRoom,
                 leaderboard: getLocalLeaderboard(),
+                deletedPlayerIds: getDeletedPlayerIds(),
               });
             }, 100);
 
@@ -759,6 +798,13 @@ export default function App() {
           if (data.leaderboard && Array.isArray(data.leaderboard)) {
             const merged = mergeLeaderboards(getLocalLeaderboard(), data.leaderboard);
             saveLocalLeaderboard(merged);
+          }
+
+          // Sync deleted player IDs
+          if (data.deletedPlayerIds && Array.isArray(data.deletedPlayerIds)) {
+            const mergedDeleted = Array.from(new Set([...getDeletedPlayerIds(), ...data.deletedPlayerIds]));
+            saveDeletedPlayerIds(mergedDeleted);
+            setLeaderboardVersion((v) => v + 1);
           }
         }
         break;
@@ -1014,25 +1060,41 @@ export default function App() {
 
       case "CHAT": {
         setChatMessages((prev) => [...prev, data.message]);
+        setUnreadChatCount((c) => c + 1);
+        setActiveChatNotification(data.message);
         break;
       }
 
       case "TAUNT": {
         const id = Math.random().toString(36).substring(2, 9);
-        const xOffset = Math.floor(Math.random() * 60) - 30;
-        setActiveEmotes((prev) => [
-          ...prev,
-          {
-            id,
-            senderName: data.senderName,
-            emoji: data.emoji,
-            isOpponent: true,
-            xOffset,
-          },
-        ]);
+        setActiveCenterTaunt({
+          id,
+          senderName: data.senderName,
+          emoji: data.emoji,
+        });
         setTimeout(() => {
-          setActiveEmotes((prev) => prev.filter((e) => e.id !== id));
-        }, 2500);
+          setActiveCenterTaunt((curr) => curr?.id === id ? null : curr);
+        }, 5000);
+        break;
+      }
+
+      case "SYNC_DELETED_IDS": {
+        if (data.deletedPlayerIds && Array.isArray(data.deletedPlayerIds)) {
+          const mergedDeleted = Array.from(new Set([...getDeletedPlayerIds(), ...data.deletedPlayerIds]));
+          saveDeletedPlayerIds(mergedDeleted);
+          setLeaderboardVersion((v) => v + 1);
+          
+          // Reset profile if the current player's own ID got terminated/deleted!
+          const currentPid = localStorage.getItem("doi_player_id") || playerId;
+          if (currentPid && mergedDeleted.includes(currentPid)) {
+            const newPid = "usr_" + Math.random().toString(36).substring(2, 11);
+            localStorage.setItem("doi_player_id", newPid);
+            setPlayerId(newPid);
+            setPlayerName("Guesser");
+            setShowNameSetup(true);
+            setError("YOUR PLAYER ID WAS DISINTEGRATED BY THE ADMINISTRATOR. PROFILE RESET COMMENCED.");
+          }
+        }
         break;
       }
 
@@ -2091,6 +2153,21 @@ export default function App() {
                   </div>
                 </div>
               )}
+              {/* CLICKABLE CHAT ICON WITH NOTIFICATION DOT */}
+              <button
+                onClick={scrollToChat}
+                className="relative p-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-emerald-400 rounded-lg transition-all cursor-pointer flex items-center justify-center shrink-0"
+                title="Scroll to match chat"
+              >
+                <MessageSquare className="w-4 h-4" />
+                {unreadChatCount > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                )}
+              </button>
+
               <button
                 onClick={handleOnlineLeave}
                 className="text-xs text-red-400 hover:text-red-300 uppercase cursor-pointer"
@@ -2198,7 +2275,7 @@ export default function App() {
                 <Scratchpad key="online" state={onlineScratch} onChange={setOnlineScratch} onAutofill={setDraftCode} />
 
                 {/* Match Chat System (deleted after game) */}
-                <div className="bg-slate-900/40 border border-slate-900 rounded-xl p-4 flex flex-col h-[280px]">
+                <div id="match-chat-system" className="bg-slate-900/40 border border-slate-900 rounded-xl p-4 flex flex-col h-[280px] transition-all duration-500">
                   <h4 className="text-[10px] font-mono font-bold tracking-widest text-emerald-400 uppercase mb-2 flex items-center justify-between">
                     <span>Match Chat</span>
                     <span className="text-slate-600 text-[9px]">P2P • SESSION ONLY</span>
@@ -2228,6 +2305,7 @@ export default function App() {
                       type="text"
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
+                      onFocus={() => setUnreadChatCount(0)}
                       placeholder="Type a message..."
                       maxLength={100}
                       className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 font-mono text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
@@ -3017,6 +3095,7 @@ export default function App() {
       <AnimatePresence>
         {showLeaderboard && (
           <Leaderboard
+            leaderboardVersion={leaderboardVersion}
             onClose={() => setShowLeaderboard(false)}
             currentPlayerName={playerName}
             currentPlayerId={playerId}
@@ -3046,6 +3125,79 @@ export default function App() {
         </AnimatePresence>
       </div>
 
+      {/* CLICKABLE INCOMING CHAT NOTIFICATION TOAST */}
+      <AnimatePresence>
+        {activeChatNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: -50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.9 }}
+            onClick={scrollToChat}
+            className="fixed top-20 right-4 z-[90] max-w-sm w-full bg-slate-950/95 border border-emerald-500/30 hover:border-emerald-500/80 rounded-xl p-3.5 shadow-[0_0_30px_rgba(16,185,129,0.2)] cursor-pointer hover:shadow-[0_0_35px_rgba(16,185,129,0.3)] transition-all flex items-start gap-3 pointer-events-auto backdrop-blur-md"
+          >
+            <div className="p-2 bg-emerald-950/50 rounded-lg border border-emerald-500/20 text-emerald-400 shrink-0">
+              <MessageSquare className="w-4 h-4 animate-bounce" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between">
+                <span className="font-mono text-[9px] font-black text-emerald-400 uppercase tracking-widest">
+                  NEW MESSAGE RECEIVED
+                </span>
+                <span className="text-[8px] font-mono text-slate-500 uppercase">
+                  TAP TO VIEW
+                </span>
+              </div>
+              <p className="font-mono text-xs text-slate-100 font-bold truncate mt-1">
+                {formatName(activeChatNotification.senderName)}
+              </p>
+              <p className="font-mono text-[10px] text-slate-400 truncate leading-relaxed mt-0.5">
+                {activeChatNotification.text}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* FULL-SCREEN CENTERED ANIMATED TAUNT BANNER */}
+      <AnimatePresence>
+        {activeCenterTaunt && (
+          <div className="fixed inset-0 flex items-center justify-center pointer-events-none z-[100] bg-black/40 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0, rotate: -15, opacity: 0 }}
+              animate={{
+                scale: [0, 1.2, 1, 1, 0.9, 0],
+                rotate: [-15, 10, -5, 5, 0, 15],
+                opacity: [0, 1, 1, 1, 1, 0],
+              }}
+              transition={{ duration: 5, times: [0, 0.1, 0.2, 0.8, 0.9, 1], ease: "easeInOut" }}
+              className="flex flex-col items-center justify-center bg-slate-950/95 border-2 border-red-500/80 rounded-3xl p-8 shadow-[0_0_60px_rgba(239,68,68,0.4)] max-w-sm w-full mx-4"
+            >
+              <div className="absolute inset-0 bg-red-600/10 rounded-3xl animate-pulse -z-10" />
+              
+              <motion.span
+                animate={{
+                  scale: [1, 1.3, 1, 1.3, 1],
+                  rotate: [0, -10, 10, -10, 10, 0],
+                }}
+                transition={{ repeat: Infinity, duration: 1.5 }}
+                className="text-8xl select-none filter drop-shadow-[0_0_20px_rgba(239,68,68,0.6)] mb-4"
+              >
+                {activeCenterTaunt.emoji}
+              </motion.span>
+              
+              <div className="text-center">
+                <h3 className="font-mono text-sm font-black text-red-500 uppercase tracking-widest animate-pulse">
+                  ⚠️ INCOMING TAUNT ⚠️
+                </h3>
+                <p className="font-mono text-xs text-slate-300 uppercase mt-2 font-bold bg-red-950/40 px-3 py-1.5 rounded border border-red-500/20 shadow-inner">
+                  {formatName(activeCenterTaunt.senderName)} IS MOCKING YOU!
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
         </>
       )}
 
@@ -3069,6 +3221,7 @@ export default function App() {
         revealedOpponentSecret={revealedOpponentSecret}
         connRef={connRef}
         onAdminForceWin={handleAdminForceWin}
+        onLeaderboardChange={() => setLeaderboardVersion((v) => v + 1)}
       />
 
       {/* DEV SYSTEM PORT TRIGGER */}

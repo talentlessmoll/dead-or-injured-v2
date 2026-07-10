@@ -215,3 +215,34 @@ export function mergeLeaderboards(
   return mergedList;
 }
 
+// Get P2P blacklisted/deleted player IDs
+export function getDeletedPlayerIds(): string[] {
+  try {
+    const raw = localStorage.getItem("doi_deleted_player_ids");
+    if (!raw) return [];
+    return JSON.parse(raw) as string[];
+  } catch (e) {
+    console.error("Failed to parse deleted player IDs:", e);
+    return [];
+  }
+}
+
+// Save P2P blacklisted/deleted player IDs
+export function saveDeletedPlayerIds(ids: string[]): void {
+  try {
+    localStorage.setItem("doi_deleted_player_ids", JSON.stringify(ids));
+  } catch (e) {
+    console.error("Failed to save deleted player IDs:", e);
+  }
+}
+
+// Save specific deleted player ID
+export function addDeletedPlayerId(id: string): string[] {
+  const current = getDeletedPlayerIds();
+  if (current.includes(id)) return current;
+  const updated = [...current, id];
+  saveDeletedPlayerIds(updated);
+  return updated;
+}
+
+

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Terminal, Shield, Play, ChevronRight, X, Sparkles, HelpCircle, AlertCircle, FileCode, Clock, RefreshCw, Key, Power, MessageSquare, Zap, Target, Eye, Database } from "lucide-react";
+import { Terminal, Shield, Play, ChevronRight, X, Sparkles, HelpCircle, AlertCircle, FileCode, Clock, RefreshCw, Key, Power, MessageSquare, Zap, Target, Eye, Database, Trash2, Edit3, Users } from "lucide-react";
 import { GameRoom, Guess, ScratchpadState, SinglePlayerState } from "../types";
+import { getLocalLeaderboard, saveLocalLeaderboard, getDeletedPlayerIds, saveDeletedPlayerIds, addDeletedPlayerId } from "../utils";
 
 interface AdminConsoleProps {
   isOpen: boolean;
@@ -24,6 +25,7 @@ interface AdminConsoleProps {
   revealedOpponentSecret?: string | null;
   connRef?: React.MutableRefObject<any>;
   onAdminForceWin?: () => void;
+  onLeaderboardChange?: () => void;
 }
 
 interface CommandLog {
@@ -50,14 +52,37 @@ export default function AdminConsole({
   revealedOpponentSecret,
   connRef,
   onAdminForceWin,
+  onLeaderboardChange,
 }: AdminConsoleProps) {
   const [commandInput, setCommandInput] = useState("");
-  const [activeTab, setActiveTab] = useState<"terminal" | "commands">("terminal");
+  const [activeTab, setActiveTab] = useState<"terminal" | "commands" | "database">("terminal");
   const [history, setHistory] = useState<CommandLog[]>([
     { text: "SYSTEM OPERATIONAL // PORT STATUS: LISTENING", type: "info" },
     { text: "TYPE '/help' FOR THE COMPLETE LIST OF AVAILABLE PROTOCOLS", type: "info" }
   ]);
   const consoleEndRef = useRef<HTMLDivElement>(null);
+
+  // Live Database States
+  const [dbRecords, setDbRecords] = useState<any[]>([]);
+  const [dbDeletedIds, setDbDeletedIds] = useState<string[]>([]);
+
+  // Edit Record Form States
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null);
+  const [editP1Name, setEditP1Name] = useState("");
+  const [editP2Name, setEditP2Name] = useState("");
+  const [editWinnerName, setEditWinnerName] = useState("");
+  const [editTurns, setEditTurns] = useState<number>(0);
+
+  // Edit Player Form States
+  const [editingPlayerId, setEditingPlayerId] = useState<string | null>(null);
+  const [editPlayerName, setEditPlayerName] = useState("");
+
+  useEffect(() => {
+    if (isOpen) {
+      setDbRecords(getLocalLeaderboard());
+      setDbDeletedIds(getDeletedPlayerIds());
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -708,6 +733,146 @@ export default function AdminConsole({
     }
   ];
 
+  // DATABASE HELPER FUNCTIONS
+  const handleDeletePlayerId = (targetId: string, targetName: string) => {
+    if (!window.confirm(`CRITICAL CONFIRMATION: BLACKLIST PLAYER ID "${targetId}" (${targetName.toUpperCase()})? THIS WILL WIPE THEIR RECORDS AND BROADCAST THE DELETION TO ALL ONLINE PEERS.`)) {
+      return;
+    }
+
+    // 1. Blacklist ID
+    const updatedDeleted = addDeletedPlayerId(targetId);
+    setDbDeletedIds(updatedDeleted);
+
+    // 2. Wipe their records
+    const currentRecords = getLocalLeaderboard();
+    const updatedRecords = currentRecords.filter(r => r.player1Id !== targetId && r.player2Id !== targetId);
+    saveLocalLeaderboard(updatedRecords);
+    setDbRecords(updatedRecords);
+
+    log(`[DB OPERATION]: BLACKLISTED PLAYER ID "${targetId}" (${targetName.toUpperCase()}). ALL ASSOCIATED GAME LOGS HAVE BEEN SHREDDED.`, "warning");
+
+    // 3. Inform peer
+    if (gameMode === "online" && connRef?.current) {
+      try {
+        connRef.current.send({
+          type: "SYNC_DELETED_IDS",
+          deletedPlayerIds: updatedDeleted
+        });
+        log("[P2P SYNC]: TRANSMITTED NEW BLACKLIST DESTRUCTION VECTOR TO CONNECTED OPPONENT.", "success");
+      } catch (err) {
+        console.error("Failed to sync blacklisted player ID via peer:", err);
+      }
+    }
+
+    if (onLeaderboardChange) {
+      onLeaderboardChange();
+    }
+  };
+
+  const handleSavePlayerName = (targetId: string) => {
+    const trimmed = editPlayerName.trim();
+    if (!trimmed) return;
+
+    // Update locally
+    const currentRecords = getLocalLeaderboard();
+    const updatedRecords = currentRecords.map(r => {
+      let changed = false;
+      let p1Name = r.player1Name;
+      let p2Name = r.player2Name;
+      let winnerName = r.winnerName;
+
+      if (r.player1Id === targetId) {
+        p1Name = trimmed;
+        changed = true;
+      }
+      if (r.player2Id === targetId) {
+        p2Name = trimmed;
+        changed = true;
+      }
+      if (r.winnerId === targetId) {
+        winnerName = trimmed;
+        changed = true;
+      }
+
+      return changed ? { ...r, player1Name: p1Name, player2Name: p2Name, winnerName } : r;
+    });
+
+    saveLocalLeaderboard(updatedRecords);
+    setDbRecords(updatedRecords);
+
+    // If it's our own name, update localStorage profile
+    if (targetId === playerId) {
+      localStorage.setItem("doi_player_name", trimmed);
+    }
+
+    log(`[DB OPERATION]: ALIGNED USER DATA. ID "${targetId}" RE-REGISTERED AS "${trimmed.toUpperCase()}".`, "success");
+    setEditingPlayerId(null);
+
+    if (onLeaderboardChange) {
+      onLeaderboardChange();
+    }
+  };
+
+  const handleSaveRecord = (matchId: string) => {
+    const currentRecords = getLocalLeaderboard();
+    const updatedRecords = currentRecords.map(r => {
+      if (r.matchId === matchId) {
+        return {
+          ...r,
+          player1Name: editP1Name,
+          player2Name: editP2Name,
+          winnerName: editWinnerName,
+          turnsUsed: editTurns
+        };
+      }
+      return r;
+    });
+
+    saveLocalLeaderboard(updatedRecords);
+    setDbRecords(updatedRecords);
+
+    log(`[DB OPERATION]: RECONFIGURED MATCH LOG "${matchId}".`, "success");
+    setEditingRecordId(null);
+
+    if (onLeaderboardChange) {
+      onLeaderboardChange();
+    }
+  };
+
+  const handleDeleteRecord = (matchId: string) => {
+    if (!window.confirm("ARE YOU SURE YOU WANT TO COMPLETELY REMOVE THIS MATCH RECORD FROM LOGS?")) return;
+
+    const currentRecords = getLocalLeaderboard();
+    const updatedRecords = currentRecords.filter(r => r.matchId !== matchId);
+    saveLocalLeaderboard(updatedRecords);
+    setDbRecords(updatedRecords);
+
+    log(`[DB OPERATION]: PURGED MATCH RECORD "${matchId}".`, "warning");
+
+    if (onLeaderboardChange) {
+      onLeaderboardChange();
+    }
+  };
+
+  // Derive unique players list for display
+  const dbPlayersList = React.useMemo(() => {
+    const playersMap = new Map<string, { id: string; name: string }>();
+    
+    // Include current player
+    playersMap.set(playerId, { id: playerId, name: localStorage.getItem("doi_player_name") || "YOU" });
+
+    dbRecords.forEach((r) => {
+      if (r.player1Id) {
+        playersMap.set(r.player1Id, { id: r.player1Id, name: r.player1Name });
+      }
+      if (r.player2Id) {
+        playersMap.set(r.player2Id, { id: r.player2Id, name: r.player2Name });
+      }
+    });
+
+    return Array.from(playersMap.values()).filter(p => p.id !== "p1" && p.id !== "p2" && p.id !== "ai" && !dbDeletedIds.includes(p.id));
+  }, [dbRecords, dbDeletedIds, playerId]);
+
   const handleCommandClick = (cmdItem: typeof commandCategories[0]["commands"][0]) => {
     if (cmdItem.requiresArg) {
       setCommandInput(cmdItem.command + " ");
@@ -771,8 +936,8 @@ export default function AdminConsole({
             </div>
           </div>
 
-          {/* Mobile Tab Selector */}
-          <div className="flex md:hidden border-b border-slate-800 bg-slate-950 p-1">
+          {/* Global Tab Selector */}
+          <div className="flex border-b border-slate-800 bg-slate-950 p-1 shrink-0">
             <button
               type="button"
               onClick={() => setActiveTab("terminal")}
@@ -782,7 +947,7 @@ export default function AdminConsole({
                   : "text-slate-500 hover:text-slate-300"
               }`}
             >
-              🖥️ TERMINAL CONSOLE ({history.length})
+              🖥️ TERMINAL ({history.length})
             </button>
             <button
               type="button"
@@ -793,113 +958,381 @@ export default function AdminConsole({
                   : "text-slate-500 hover:text-slate-300"
               }`}
             >
-              🎛️ COMMAND DIRECTORY
+              🎛️ PROTOCOLS
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("database")}
+              className={`flex-1 py-2 text-[10px] font-mono font-bold uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                activeTab === "database"
+                  ? "bg-emerald-950/40 border border-emerald-500/30 text-emerald-400"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              🗃️ DATABASE & PLAYERS
             </button>
           </div>
 
-          {/* Responsive Split Pane Area */}
-          <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0 bg-slate-950">
-            {/* Left Panel: Terminal System */}
-            <div className={`flex-1 flex flex-col h-full min-h-0 ${activeTab === "terminal" ? "flex" : "hidden md:flex"}`}>
-              {/* Scrolling output log */}
-              <div className="flex-1 overflow-y-auto p-5 font-mono text-xs space-y-2 bg-slate-950 min-h-0 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-                {history.map((h, i) => (
-                  <div
-                    key={i}
-                    className={`leading-relaxed break-words py-0.5 px-2 rounded font-mono ${
-                      h.type === "input"
-                        ? "text-slate-200 bg-slate-900/40 font-bold"
-                        : h.type === "success"
-                        ? "text-emerald-400 bg-emerald-950/10 border-l-2 border-emerald-500"
-                        : h.type === "error"
-                        ? "text-rose-400 bg-rose-950/10 border-l-2 border-rose-500"
-                        : h.type === "code"
-                        ? "text-cyan-400 bg-cyan-950/10 border-l-2 border-cyan-500 text-left font-semibold"
-                        : h.type === "warning"
-                        ? "text-amber-400 bg-amber-950/10 border-l-2 border-amber-500"
-                        : "text-slate-400"
-                    }`}
+          {/* Responsive Area */}
+          <div className="flex-1 flex overflow-hidden min-h-0 bg-slate-950">
+            {/* TERMINAL TAB */}
+            {activeTab === "terminal" && (
+              <div className="flex-1 flex flex-col h-full min-h-0">
+                {/* Scrolling output log */}
+                <div className="flex-1 overflow-y-auto p-5 font-mono text-xs space-y-2 bg-slate-950 min-h-0 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+                  {history.map((h, i) => (
+                    <div
+                      key={i}
+                      className={`leading-relaxed break-words py-0.5 px-2 rounded font-mono ${
+                        h.type === "input"
+                          ? "text-slate-200 bg-slate-900/40 font-bold"
+                          : h.type === "success"
+                          ? "text-emerald-400 bg-emerald-950/10 border-l-2 border-emerald-500"
+                          : h.type === "error"
+                          ? "text-rose-400 bg-rose-950/10 border-l-2 border-rose-500"
+                          : h.type === "code"
+                          ? "text-cyan-400 bg-cyan-950/10 border-l-2 border-cyan-500 text-left font-semibold"
+                          : h.type === "warning"
+                          ? "text-amber-400 bg-amber-950/10 border-l-2 border-amber-500"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      {h.type === "code" ? (
+                        <pre className="font-mono text-xs overflow-x-auto whitespace-pre leading-normal">
+                          {h.text}
+                        </pre>
+                      ) : (
+                        h.text
+                      )}
+                    </div>
+                  ))}
+                  <div ref={consoleEndRef} />
+                </div>
+
+                {/* Input Form at bottom of Terminal */}
+                <form onSubmit={handleCommandSubmit} className="flex border-t border-slate-800 bg-slate-950 p-3">
+                  <div className="flex-1 relative flex items-center">
+                    <span className="absolute left-3 text-emerald-500 font-mono text-sm font-bold animate-pulse">
+                      &gt;
+                    </span>
+                    <input
+                      type="text"
+                      value={commandInput}
+                      onChange={(e) => setCommandInput(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-4 py-3 text-emerald-400 font-mono text-xs focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-800 uppercase"
+                      placeholder="ENTER IN-GAME PROTOCOL DIRECTIVE..."
+                      autoFocus
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="ml-3 px-5 bg-emerald-950/40 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 hover:border-emerald-500 rounded-xl font-mono text-xs font-bold tracking-widest uppercase transition-all duration-300 flex items-center gap-2 cursor-pointer"
                   >
-                    {h.type === "code" ? (
-                      <pre className="font-mono text-xs overflow-x-auto whitespace-pre leading-normal">
-                        {h.text}
-                      </pre>
+                    EXECUTE
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* COMMANDS TAB */}
+            {activeTab === "commands" && (
+              <div className="flex-1 flex flex-col h-full overflow-hidden">
+                <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between">
+                  <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 animate-pulse text-emerald-400" /> COMMAND DIRECTORY
+                  </span>
+                  <span className="text-[8px] font-mono text-slate-500 uppercase">TAPPING RUNS INSTANTLY</span>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-5 min-h-0 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+                  {commandCategories.map((cat, catIdx) => (
+                    <div key={catIdx} className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[9px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded border ${cat.color}`}>
+                          {cat.title}
+                        </span>
+                        <div className="flex-1 h-px bg-slate-800" />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+                        {cat.commands.map((cmdItem) => (
+                          <button
+                            key={cmdItem.name}
+                            type="button"
+                            onClick={() => handleCommandClick(cmdItem)}
+                            className="w-full text-left p-2.5 bg-slate-950/60 hover:bg-slate-900 border border-slate-800/80 hover:border-emerald-500/30 rounded-xl transition-all flex flex-col gap-0.5 group cursor-pointer"
+                          >
+                            <div className="flex items-center justify-between w-full">
+                              <span className="font-mono text-[10px] font-bold text-slate-300 group-hover:text-emerald-400 transition-colors uppercase tracking-wider">
+                                {cmdItem.name}
+                              </span>
+                              <span className="font-mono text-[9px] text-slate-600 group-hover:text-emerald-500/60 transition-colors">
+                                {cmdItem.command}
+                              </span>
+                            </div>
+                            <p className="font-mono text-[9px] text-slate-500 group-hover:text-slate-400 transition-colors leading-normal">
+                              {cmdItem.description}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* DATABASE AND PLAYERS TAB */}
+            {activeTab === "database" && (
+              <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0 bg-slate-950 p-4 gap-4">
+                {/* Left Panel: Players Directory */}
+                <div className="flex-1 flex flex-col bg-slate-900 border border-slate-800 rounded-xl p-4 overflow-hidden min-h-[220px]">
+                  <div className="flex items-center gap-2 border-b border-slate-800 pb-2 mb-3">
+                    <Users className="w-4 h-4 text-emerald-400" />
+                    <h4 className="font-mono text-xs font-bold text-emerald-400 uppercase tracking-widest">
+                      PLAYERS LOG ({dbPlayersList.length})
+                    </h4>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+                    {dbPlayersList.length === 0 ? (
+                      <div className="h-full flex items-center justify-center p-8">
+                        <p className="font-mono text-[10px] text-slate-600 uppercase tracking-widest text-center">
+                          NO PLAYER PROFILES DETECTED IN LOCAL REGISTRY
+                        </p>
+                      </div>
                     ) : (
-                      h.text
+                      dbPlayersList.map((p) => {
+                        const isEditing = editingPlayerId === p.id;
+                        return (
+                          <div
+                            key={p.id}
+                            className="bg-slate-950/80 border border-slate-800/60 rounded-lg p-3 flex flex-col gap-2 hover:border-slate-800 transition-colors"
+                          >
+                            {isEditing ? (
+                              <div className="flex flex-col gap-2">
+                                <span className="font-mono text-[8px] text-slate-500 uppercase">
+                                  ID: {p.id}
+                                </span>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="text"
+                                    value={editPlayerName}
+                                    onChange={(e) => setEditPlayerName(e.target.value)}
+                                    maxLength={20}
+                                    className="flex-1 bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-xs text-slate-200 font-mono focus:outline-none focus:border-emerald-500 uppercase"
+                                    placeholder="Enter player name"
+                                    autoFocus
+                                  />
+                                  <button
+                                    onClick={() => handleSavePlayerName(p.id)}
+                                    className="px-2.5 py-1 bg-emerald-950 text-emerald-400 hover:bg-emerald-400 hover:text-slate-950 border border-emerald-500/30 rounded text-[10px] font-mono font-bold uppercase transition-all cursor-pointer"
+                                  >
+                                    SAVE
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingPlayerId(null)}
+                                    className="px-2.5 py-1 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200 border border-slate-700 rounded text-[10px] font-mono uppercase transition-all cursor-pointer"
+                                  >
+                                    X
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <span className="font-mono text-xs font-bold text-slate-200 uppercase tracking-wide block truncate">
+                                    {p.name}
+                                  </span>
+                                  <span className="font-mono text-[8px] text-slate-500 uppercase block select-all">
+                                    ID: {p.id}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    onClick={() => {
+                                      setEditingPlayerId(p.id);
+                                      setEditPlayerName(p.name);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-900 rounded border border-transparent hover:border-slate-800 transition-all cursor-pointer"
+                                    title="Edit user profile"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeletePlayerId(p.id, p.name)}
+                                    className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-900 rounded border border-transparent hover:border-slate-800 transition-all cursor-pointer"
+                                    title="Purge ID & Blacklist"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
                     )}
                   </div>
-                ))}
-                <div ref={consoleEndRef} />
-              </div>
-
-              {/* Input Form at bottom of Terminal */}
-              <form onSubmit={handleCommandSubmit} className="flex border-t border-slate-800 bg-slate-950 p-3">
-                <div className="flex-1 relative flex items-center">
-                  <span className="absolute left-3 text-emerald-500 font-mono text-sm font-bold animate-pulse">
-                    &gt;
-                  </span>
-                  <input
-                    type="text"
-                    value={commandInput}
-                    onChange={(e) => setCommandInput(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-4 py-3 text-emerald-400 font-mono text-xs focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-800 uppercase"
-                    placeholder="ENTER IN-GAME PROTOCOL DIRECTIVE..."
-                    autoFocus
-                  />
                 </div>
-                <button
-                  type="submit"
-                  className="ml-3 px-5 bg-emerald-950/40 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 hover:border-emerald-500 rounded-xl font-mono text-xs font-bold tracking-widest uppercase transition-all duration-300 flex items-center gap-2 cursor-pointer"
-                >
-                  EXECUTE
-                </button>
-              </form>
-            </div>
 
-            {/* Right Panel: Organized, Tab-Free Command Directory */}
-            <div className={`w-full md:w-96 border-t md:border-t-0 md:border-l border-slate-800 bg-slate-900/60 flex flex-col h-full overflow-hidden ${activeTab === "commands" ? "flex" : "hidden md:flex"}`}>
-              <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between">
-                <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 animate-pulse text-emerald-400" /> COMMAND DIRECTORY
-                </span>
-                <span className="text-[8px] font-mono text-slate-500 uppercase">TAPPING RUNS INSTANTLY</span>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-4 space-y-5 min-h-0 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
-                {commandCategories.map((cat, catIdx) => (
-                  <div key={catIdx} className="space-y-2">
+                {/* Right Panel: Match Records Journal */}
+                <div className="flex-1 flex flex-col bg-slate-900 border border-slate-800 rounded-xl p-4 overflow-hidden min-h-[220px]">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
                     <div className="flex items-center gap-2">
-                      <span className={`text-[9px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded border ${cat.color}`}>
-                        {cat.title}
-                      </span>
-                      <div className="flex-1 h-px bg-slate-800" />
-                    </div>
-                    <div className="grid grid-cols-1 gap-1.5">
-                      {cat.commands.map((cmdItem) => (
-                        <button
-                          key={cmdItem.name}
-                          type="button"
-                          onClick={() => handleCommandClick(cmdItem)}
-                          className="w-full text-left p-2.5 bg-slate-950/60 hover:bg-slate-900 border border-slate-800/80 hover:border-emerald-500/30 rounded-xl transition-all flex flex-col gap-0.5 group cursor-pointer"
-                        >
-                          <div className="flex items-center justify-between w-full">
-                            <span className="font-mono text-[10px] font-bold text-slate-300 group-hover:text-emerald-400 transition-colors uppercase tracking-wider">
-                              {cmdItem.name}
-                            </span>
-                            <span className="font-mono text-[9px] text-slate-600 group-hover:text-emerald-500/60 transition-colors">
-                              {cmdItem.command}
-                            </span>
-                          </div>
-                          <p className="font-mono text-[9px] text-slate-500 group-hover:text-slate-400 transition-colors leading-normal">
-                            {cmdItem.description}
-                          </p>
-                        </button>
-                      ))}
+                      <Database className="w-4 h-4 text-emerald-400" />
+                      <h4 className="font-mono text-xs font-bold text-emerald-400 uppercase tracking-widest">
+                        MATCH RECAPS ({dbRecords.length})
+                      </h4>
                     </div>
                   </div>
-                ))}
+
+                  <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+                    {dbRecords.length === 0 ? (
+                      <div className="h-full flex items-center justify-center p-8">
+                        <p className="font-mono text-[10px] text-slate-600 uppercase tracking-widest text-center">
+                          NO HISTORICAL GAME RECORDS ON FILE
+                        </p>
+                      </div>
+                    ) : (
+                      dbRecords.map((r) => {
+                        const isEditing = editingRecordId === r.matchId;
+                        const formattedDate = new Date(r.timestamp).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        });
+
+                        return (
+                          <div
+                            key={r.matchId}
+                            className="bg-slate-950/80 border border-slate-800/60 rounded-lg p-3 flex flex-col gap-2 hover:border-slate-800 transition-colors"
+                          >
+                            {isEditing ? (
+                              <div className="flex flex-col gap-2.5">
+                                <span className="font-mono text-[8px] text-slate-500 uppercase">
+                                  MATCH: {r.matchId} • {r.gameMode.toUpperCase()}
+                                </span>
+                                
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="font-mono text-[8px] text-slate-400 uppercase block mb-1">
+                                      P1 NAME
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editP1Name}
+                                      onChange={(e) => setEditP1Name(e.target.value)}
+                                      className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-200 font-mono uppercase"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="font-mono text-[8px] text-slate-400 uppercase block mb-1">
+                                      P2 NAME
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editP2Name}
+                                      onChange={(e) => setEditP2Name(e.target.value)}
+                                      className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-200 font-mono uppercase"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="font-mono text-[8px] text-slate-400 uppercase block mb-1">
+                                      WINNER NAME
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={editWinnerName}
+                                      onChange={(e) => setEditWinnerName(e.target.value)}
+                                      className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-200 font-mono uppercase"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="font-mono text-[8px] text-slate-400 uppercase block mb-1">
+                                      TURNS USED
+                                    </label>
+                                    <input
+                                      type="number"
+                                      value={editTurns}
+                                      onChange={(e) => setEditTurns(parseInt(e.target.value, 10) || 0)}
+                                      className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-[11px] text-slate-200 font-mono"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="flex gap-2 justify-end mt-1">
+                                  <button
+                                    onClick={() => handleSaveRecord(r.matchId)}
+                                    className="px-3 py-1 bg-emerald-950 text-emerald-400 hover:bg-emerald-400 hover:text-slate-950 border border-emerald-500/30 rounded text-[10px] font-mono font-bold uppercase transition-all cursor-pointer"
+                                  >
+                                    SAVE RECAP
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingRecordId(null)}
+                                    className="px-3 py-1 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200 border border-slate-700 rounded text-[10px] font-mono uppercase transition-all cursor-pointer"
+                                  >
+                                    CANCEL
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-mono text-[8px] text-slate-500 uppercase">
+                                      {formattedDate}
+                                    </span>
+                                    <span className="font-mono text-[8px] text-emerald-500 uppercase px-1.5 py-0.2 bg-emerald-950/40 border border-emerald-500/20 rounded">
+                                      {r.gameMode}
+                                    </span>
+                                  </div>
+                                  <div className="font-mono text-[11px] font-bold text-slate-300 uppercase tracking-wide mt-1">
+                                    {r.player1Name} vs {r.player2Name}
+                                  </div>
+                                  <div className="font-mono text-[9px] text-slate-400 mt-1 uppercase">
+                                    Result: <span className="text-emerald-400 font-semibold">{r.winnerName ? `${r.winnerName} won` : "Draw"}</span> • {r.turnsUsed} turns
+                                  </div>
+                                  <span className="font-mono text-[7px] text-slate-600 block mt-1 select-all">
+                                    MATCH ID: {r.matchId}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => {
+                                      setEditingRecordId(r.matchId);
+                                      setEditP1Name(r.player1Name);
+                                      setEditP2Name(r.player2Name);
+                                      setEditWinnerName(r.winnerName || "");
+                                      setEditTurns(r.turnsUsed);
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-900 rounded border border-transparent hover:border-slate-800 transition-all cursor-pointer"
+                                    title="Edit match recaps"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteRecord(r.matchId)}
+                                    className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-900 rounded border border-transparent hover:border-slate-800 transition-all cursor-pointer"
+                                    title="Delete match record"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </motion.div>
       </motion.div>
