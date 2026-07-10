@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Terminal, Shield, Play, ChevronRight, X, Sparkles, HelpCircle, AlertCircle, FileCode } from "lucide-react";
+import { Terminal, Shield, Play, ChevronRight, X, Sparkles, HelpCircle, AlertCircle, FileCode, Clock, RefreshCw, Key, Power, MessageSquare, Zap, Target, Eye, Database } from "lucide-react";
 import { GameRoom, Guess, ScratchpadState, SinglePlayerState } from "../types";
 
 interface AdminConsoleProps {
@@ -52,6 +52,7 @@ export default function AdminConsole({
   onAdminForceWin,
 }: AdminConsoleProps) {
   const [commandInput, setCommandInput] = useState("");
+  const [activeTab, setActiveTab] = useState<"terminal" | "commands">("terminal");
   const [history, setHistory] = useState<CommandLog[]>([
     { text: "SYSTEM OPERATIONAL // PORT STATUS: LISTENING", type: "info" },
     { text: "TYPE '/help' FOR THE COMPLETE LIST OF AVAILABLE PROTOCOLS", type: "info" }
@@ -91,16 +92,23 @@ export default function AdminConsole({
     return { dead, injured };
   };
 
-  // Deduce Remaining Possible Codes based on historical guesses
-  const runSolver = (guesses: Guess[]) => {
-    if (guesses.length === 0) {
-      log("NO GUESS DATA ON RECORD. AT LEAST 1 HISTORIC GUESS REQUIRED TO INITIATE CONSTRAINTS.", "warning");
-      return;
+  // Extract the opponent's secret code safely
+  const getOpponentCode = (): string | null => {
+    if (gameMode === "single" && singlePlayer) {
+      return singlePlayer.aiCode || null;
     }
+    if (gameMode === "local" && localState) {
+      return localState.turn === "p1" ? localState.p2Code : localState.p1Code;
+    }
+    if (gameMode === "online" && activeRoom) {
+      const opp = activeRoom.players.find((p) => p.id !== playerId);
+      return revealedOpponentSecret || (opp?.secretCode && opp.secretCode !== "LOCKED" ? opp.secretCode : null);
+    }
+    return null;
+  };
 
-    log("INITIATING DEDUCTIVE GRID ANALYSIS...", "info");
-
-    // 1. Generate all unique 5040 combinations
+  // Deduce Remaining Possible Codes based on historical guesses
+  const getRemainingCandidates = (guesses: Guess[]): string[] => {
     const candidates: string[] = [];
     for (let a = 0; a <= 9; a++) {
       for (let b = 0; b <= 9; b++) {
@@ -115,7 +123,6 @@ export default function AdminConsole({
       }
     }
 
-    // 2. Filter against historic guesses of the active player
     let filtered = [...candidates];
     for (const g of guesses) {
       filtered = filtered.filter((cand) => {
@@ -123,6 +130,17 @@ export default function AdminConsole({
         return dead === g.dead && injured === g.injured;
       });
     }
+    return filtered;
+  };
+
+  const runSolver = (guesses: Guess[]) => {
+    if (guesses.length === 0) {
+      log("NO GUESS DATA ON RECORD. AT LEAST 1 HISTORIC GUESS REQUIRED TO INITIATE CONSTRAINTS.", "warning");
+      return;
+    }
+
+    log("INITIATING DEDUCTIVE GRID ANALYSIS...", "info");
+    const filtered = getRemainingCandidates(guesses);
 
     log(`SOLVER ENGINE: COMPLETED SCREENING PROTOCOL.`, "success");
     log(`COMPATIBLE CODE CANDIDATES REMAINING: ${filtered.length} / 5040`, "code");
@@ -138,28 +156,37 @@ export default function AdminConsole({
     }
   };
 
-  const handleCommandSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cmd = commandInput.trim();
-    if (!cmd) return;
+  const executeCommand = (cmdStr: string) => {
+    const trimmed = cmdStr.trim();
+    if (!trimmed) return;
 
-    log(`> ${cmd}`, "input");
-    setCommandInput("");
-
-    const parts = cmd.split(" ");
-    const command = parts[0].toLowerCase();
-    const arg = parts[1] || "";
+    const parts = trimmed.split(" ");
+    const rawCommand = parts[0].toLowerCase();
+    const command = rawCommand.startsWith("/") ? rawCommand : "/" + rawCommand;
+    const arg = parts.slice(1).join(" ");
 
     switch (command) {
       case "/help": {
         log("AVAILABLE IN-GAME OPERATING CODES:", "info");
-        log("  /reveal          - EXPOSES opponent/AI secret code registers", "success");
-        log("  /solve           - ANALYZES constraints & returns remaining logical possibilities", "success");
-        log("  /win             - FORCES instant operational victory conditions", "success");
-        log("  /setcode <code>  - INJECTS custom 4-digit unique code to target registers", "success");
-        log("  /scratchall      - SYNCS scratchpad perfectly with opponent secret code", "success");
-        log("  /logs            - DUMPS structured match telemetry parameters", "success");
-        log("  /clear           - PURGES developer console logs", "success");
+        log("  --- GENERAL CRACKING OPERATIONS ---", "info");
+        log("  /reveal             - EXPOSES opponent/AI secret code registers", "success");
+        log("  /solve              - ANALYZES constraints & returns remaining logical possibilities", "success");
+        log("  /scratchall         - SYNCS scratchpad perfectly with opponent secret code", "success");
+        log("  /undo               - REVERTS the last submitted guess of the current turn", "success");
+        log("  /win                - FORCES instant operational victory conditions", "success");
+        log("  /setcode <code>     - INJECTS custom 4-digit unique code to target registers", "success");
+        log("  /logs               - DUMPS structured match telemetry parameters", "success");
+        log("  /clear              - PURGES developer console logs", "success");
+        log("  --- ADVANCED ANALYSIS & UTILITIES ---", "info");
+        log("  /hint               - REVEALS a calculated clue/digit from opponent's secret", "success");
+        log("  /matrixheat         - GENERATES a spatial probability matrix of remaining digits", "success");
+        log("  /entropy            - CALCULATES remaining system uncertainty (Shannon entropy)", "success");
+        log("  /time-dilation      - DILATES elapsed turn timers to secure tactical buffers", "success");
+        log("  --- NETWORK & SENSOR PEER PEAK ---", "info");
+        log("  /peek   (or /peak)  - PEERS into live opponent scratchpad / AI state", "success");
+        log("  /ping               - PING signal latency verification diagnostics", "success");
+        log("  /disconnect         - ENFORCES termination of P2P network bridge", "success");
+        log("  /broadcast <msg>    - INJECTS a system broadcast notification into the chat", "success");
         break;
       }
 
@@ -250,7 +277,6 @@ export default function AdminConsole({
           setLocalState((prev: any) => {
             if (!prev) return null;
             if (prev.turn === "p1") {
-              // P1 is guessing P2's code, so change P2's code
               return { ...prev, p2Code: arg };
             } else {
               return { ...prev, p1Code: arg };
@@ -317,15 +343,7 @@ export default function AdminConsole({
       }
 
       case "/scratchall": {
-        let secretCode = "";
-        if (gameMode === "single" && singlePlayer) {
-          secretCode = singlePlayer.aiCode || "";
-        } else if (gameMode === "online" && activeRoom) {
-          const opp = activeRoom.players.find((p) => p.id !== playerId);
-          secretCode = revealedOpponentSecret || (opp?.secretCode && opp.secretCode !== "LOCKED" ? opp.secretCode : "");
-        } else if (gameMode === "local" && localState) {
-          secretCode = localState.turn === "p1" ? localState.p2Code : localState.p1Code;
-        }
+        const secretCode = getOpponentCode();
 
         if (!secretCode) {
           log("REJECTED: COULD NOT EXTRACT OPPONENT'S TARGET SECRET. SECURE CHANNEL TUNNELING ATTEMPT INITIATED... RETRY IN 1 SECOND.", "error");
@@ -371,11 +389,8 @@ export default function AdminConsole({
         } else if (gameMode === "online") {
           setOnlineScratch(newScratch);
         } else if (gameMode === "local") {
-          // Both scratchpads updated if present
-          if (localState) {
-            setSingleScratch(newScratch);
-            setOnlineScratch(newScratch);
-          }
+          setSingleScratch(newScratch);
+          setOnlineScratch(newScratch);
         }
 
         log("HYPER-TACTILE DECISION MATRIX FLUSHED & ALIGNED WITH TARGET CODE.", "success");
@@ -393,10 +408,315 @@ export default function AdminConsole({
         break;
       }
 
+      case "/hint": {
+        const code = getOpponentCode();
+        if (!code) {
+          log("REJECTED: COULD NOT EXTRACT OPPONENT REGISTER CODE.", "error");
+          break;
+        }
+        const hintType = Math.floor(Math.random() * 3);
+        if (hintType === 0) {
+          const pos = Math.floor(Math.random() * 4);
+          log(`[HINT PROTOCOL]: DIGIT AT POSITION ${pos + 1} IS '${code[pos]}'.`, "success");
+        } else if (hintType === 1) {
+          const digits = code.split("");
+          const randDigit = digits[Math.floor(Math.random() * 4)];
+          log(`[HINT PROTOCOL]: THE TARGET CODE CONTAINS THE DIGIT '${randDigit}'.`, "success");
+        } else {
+          const sum = code.split("").reduce((acc, d) => acc + parseInt(d, 10), 0);
+          const evens = code.split("").filter(d => parseInt(d, 10) % 2 === 0).length;
+          log(`[HINT PROTOCOL]: DIGIT COMBINATORIAL SUM IS ${sum}. EVEN DIGITS: ${evens}, ODD DIGITS: ${4 - evens}.`, "success");
+        }
+        break;
+      }
+
+      case "/matrixheat": {
+        let activeGuesses: Guess[] = [];
+        if (gameMode === "single" && singlePlayer) {
+          activeGuesses = singlePlayer.guesses.filter((g) => g.playerId === "player");
+        } else if (gameMode === "online" && activeRoom) {
+          activeGuesses = activeRoom.guesses.filter((g) => g.playerId === playerId);
+        } else if (gameMode === "local" && localState) {
+          const activeTurn = localState.turn;
+          activeGuesses = localState.guesses.filter((g: any) => g.playerId === activeTurn);
+        }
+
+        const filtered = getRemainingCandidates(activeGuesses);
+        if (filtered.length === 0) {
+          log("HEATMAP FAILURE: NO COMPATIBLE CANDIDATES FOUND IN ACTIVE DEPLOYMENT.", "error");
+          break;
+        }
+
+        log(`MATRIX HEAT PROBABILITY PROFILE (${filtered.length} COMPATIBLE CANDIDATES):`, "info");
+        log(`DIGIT | POS 1  | POS 2  | POS 3  | POS 4`, "info");
+        log(`------------------------------------------`, "info");
+
+        // counts[pos][digit]
+        const counts = Array(4).fill(null).map(() => Array(10).fill(0));
+        for (const cand of filtered) {
+          for (let pos = 0; pos < 4; pos++) {
+            const d = parseInt(cand[pos], 10);
+            counts[pos][d]++;
+          }
+        }
+
+        for (let d = 0; d <= 9; d++) {
+          const p1 = ((counts[0][d] / filtered.length) * 100).toFixed(0);
+          const p2 = ((counts[1][d] / filtered.length) * 100).toFixed(0);
+          const p3 = ((counts[2][d] / filtered.length) * 100).toFixed(0);
+          const p4 = ((counts[3][d] / filtered.length) * 100).toFixed(0);
+          
+          const p1Str = (p1 + "%").padStart(5);
+          const p2Str = (p2 + "%").padStart(5);
+          const p3Str = (p3 + "%").padStart(5);
+          const p4Str = (p4 + "%").padStart(5);
+          
+          const isHigh = (counts[0][d] / filtered.length > 0.4) || 
+                         (counts[1][d] / filtered.length > 0.4) || 
+                         (counts[2][d] / filtered.length > 0.4) || 
+                         (counts[3][d] / filtered.length > 0.4);
+
+          log(`  ${d}   | ${p1Str}  | ${p2Str}  | ${p3Str}  | ${p4Str}`, isHigh ? "success" : "info");
+        }
+        break;
+      }
+
+      case "/entropy": {
+        let activeGuesses: Guess[] = [];
+        if (gameMode === "single" && singlePlayer) {
+          activeGuesses = singlePlayer.guesses.filter((g) => g.playerId === "player");
+        } else if (gameMode === "online" && activeRoom) {
+          activeGuesses = activeRoom.guesses.filter((g) => g.playerId === playerId);
+        } else if (gameMode === "local" && localState) {
+          const activeTurn = localState.turn;
+          activeGuesses = localState.guesses.filter((g: any) => g.playerId === activeTurn);
+        }
+
+        const filtered = getRemainingCandidates(activeGuesses);
+        const currentPool = filtered.length;
+        const startEntropy = Math.log2(5040); // 12.299
+        const currentEntropy = currentPool > 0 ? Math.log2(currentPool) : 0;
+        const infoGained = startEntropy - currentEntropy;
+        const certaintyPct = ((infoGained / startEntropy) * 100).toFixed(1);
+
+        log(`GAME-STATE SHANNON ENTROPY PROFILE:`, "info");
+        log(`  CURRENT UNCERTAINTY : ${currentEntropy.toFixed(3)} BITS`, "code");
+        log(`  INITIAL UNCERTAINTY : ${startEntropy.toFixed(3)} BITS (5040 COMBINATIONS)`, "info");
+        log(`  INFORMATION EXTRACTED: ${infoGained.toFixed(3)} BITS`, "success");
+        log(`  SYSTEM DEDUCTIVE CERTAINTY: ${certaintyPct}%`, "success");
+
+        const barLength = 20;
+        const filledLength = Math.max(0, Math.min(barLength, Math.round((parseFloat(certaintyPct) / 100) * barLength)));
+        const bar = "█".repeat(filledLength) + "░".repeat(barLength - filledLength);
+        log(`  ANALYSIS RESOLUTION : [${bar}]`, "success");
+        break;
+      }
+
+      case "/time-dilation": {
+        if (gameMode === "online" && activeRoom) {
+          setActiveRoom((prev: any) => {
+            if (!prev) return null;
+            const currentDur = prev.timerDuration ?? 60;
+            return { ...prev, timerDuration: currentDur * 5 };
+          });
+          log("⏱️ CHRONOMETER PROTOCOL ENFORCED: ACTIVE TURN TIME DILATED BY 5x.", "success");
+        } else {
+          log("⏱️ TIME DILATION SHIELD GENERATED: LOCAL CHRONOMETERS AND SPEED COEFFICIENTS RETARDED.", "success");
+        }
+        break;
+      }
+
+      case "/peek":
+      case "/peak": {
+        if (gameMode === "local" && localState) {
+          const p1Scratch = localState.p1Scratch;
+          const p2Scratch = localState.p2Scratch;
+          log("👁️ SENSOR PEER: EXTRACTING LOCAL SCRATCHPAD BUFFERS...", "success");
+          
+          const p1Elim = p1Scratch.eliminated.map((e: boolean, i: number) => e ? i : null).filter((v: any) => v !== null).join(", ") || "NONE";
+          const p1Conf = p1Scratch.confirmed.map((e: boolean, i: number) => e ? i : null).filter((v: any) => v !== null).join(", ") || "NONE";
+          const p2Elim = p2Scratch.eliminated.map((e: boolean, i: number) => e ? i : null).filter((v: any) => v !== null).join(", ") || "NONE";
+          const p2Conf = p2Scratch.confirmed.map((e: boolean, i: number) => e ? i : null).filter((v: any) => v !== null).join(", ") || "NONE";
+
+          log(`  P1 [ ${localState.p1Name} ] ELIMINATED: [ ${p1Elim} ] | CONFIRMED: [ ${p1Conf} ]`, "info");
+          log(`  P2 [ ${localState.p2Name} ] ELIMINATED: [ ${p2Elim} ] | CONFIRMED: [ ${p2Conf} ]`, "info");
+        } else if (gameMode === "single" && singlePlayer) {
+          log("👁️ SENSOR PEER: READING AI DECODING PIPELINE STATE...", "success");
+          log(`  AI CODE TARGET REGISTRY: [ ${singlePlayer.aiCode || "NOT SET"} ]`, "code");
+          log(`  AI SYSTEM STATUS: ACTIVE`, "info");
+          const aiGuesses = singlePlayer.guesses.filter(g => g.playerId === "ai");
+          log(`  AI ATTEMPT TRAJECTORY: [ ${aiGuesses.map(g => g.code).join(" -> ") || "NO ATTEMPTS YET"} ]`, "info");
+        } else if (gameMode === "online" && activeRoom) {
+          const opp = activeRoom.players.find(p => p.id !== playerId);
+          const oppGuesses = activeRoom.guesses.filter(g => g.playerId === opp?.id);
+          log(`👁️ SENSOR PEER: ESTABLISHING TAP ON OPPONENT [ ${opp?.name || "Opponent"} ]...`, "success");
+          log(`  SECRET CODE OVERRIDE BUFFER: [ ${getOpponentCode() || "LOCKED / ENCRYPTED"} ]`, "code");
+          log(`  HISTORIC ATTEMPTS COUNTED  : ${oppGuesses.length}`, "info");
+          if (oppGuesses.length > 0) {
+            const lastG = oppGuesses[oppGuesses.length - 1];
+            log(`  LAST ATTEMPT TRANSMITTED   : [ ${lastG.code} ] -> RESULT: ${lastG.dead}D ${lastG.injured}I`, "info");
+          }
+        } else {
+          log("REJECTED: NO ACTIVE DEPLOYMENT TO PEER INTO.", "error");
+        }
+        break;
+      }
+
+      case "/undo": {
+        if (gameMode === "single" && singlePlayer) {
+          setSinglePlayer((prev: any) => {
+            if (!prev || prev.guesses.length === 0) return prev;
+            const newGuesses = [...prev.guesses];
+            let poppedPlayer = false;
+            while (newGuesses.length > 0 && !poppedPlayer) {
+              const popped = newGuesses.pop();
+              if (popped && popped.playerId === "player") {
+                poppedPlayer = true;
+              }
+            }
+            return {
+              ...prev,
+              guesses: newGuesses,
+              status: "playing",
+              winner: null
+            };
+          });
+          log("⏮️ UNDO SEQUENCE INITIATED: PRUNED LAST GUESS FROM SINGLE PLAYER CACHE.", "success");
+        } else if (gameMode === "local" && localState) {
+          setLocalState((prev: any) => {
+            if (!prev || prev.guesses.length === 0) return prev;
+            const newGuesses = [...prev.guesses];
+            const lastGuess = newGuesses.pop();
+            return {
+              ...prev,
+              guesses: newGuesses,
+              status: "playing",
+              winner: null,
+              turn: lastGuess ? lastGuess.playerId : prev.turn
+            };
+          });
+          log("⏮️ UNDO SEQUENCE INITIATED: REVERTED LAST GUESS AND RECENTALIZED ACTIVE TURN.", "success");
+        } else {
+          log("REJECTED: UNDO PROTOCOL IS STRICLY RESTRICTED TO SINGLE AND LOCAL PASS-PLAY DEPLOYMENTS.", "error");
+        }
+        break;
+      }
+
+      case "/ping": {
+        const pingTime = Math.floor(Math.random() * 25) + 12;
+        log(`📡 PING >>> BEACON TRANSMITTED TO IP BOUNDARY...`, "info");
+        log(`📡 PONG <<< ECHO RECEIVED. LATENCY: ${pingTime}ms. SIGNAL STRENGTH: OPTIMAL. P2P JITTER: <2ms.`, "success");
+        break;
+      }
+
+      case "/disconnect": {
+        if (gameMode === "online" && connRef?.current) {
+          try {
+            connRef.current.close();
+            log("🔌 DISCONNECTION SEQUENCE COMMANDED: CLOSED WebRTC P2P SOCKET BRIDGE.", "success");
+          } catch (err) {
+            log("🔌 FAILED TO FORCIBLY TERMINATE ACTIVE SOCKET BRIDGE.", "error");
+          }
+        } else {
+          log("🔌 REJECTED: DISCONNECT ATTEMPT FAILED. NO ACTIVE ONLINE P2P CONNECTIONS.", "error");
+        }
+        break;
+      }
+
+      case "/broadcast": {
+        const messageText = arg.trim() || "SECURE SYSTEM BROADCAST: OPERATIONAL CRITICAL BUFFER RECONFIGURATION COMMENCING.";
+        if (gameMode === "online" && connRef?.current) {
+          const broadcastMsg = {
+            id: "broadcast-" + Date.now(),
+            senderId: "system",
+            senderName: "⚠️ SYSTEM BROADCAST",
+            text: messageText,
+            timestamp: Date.now()
+          };
+          try {
+            connRef.current.send({
+              type: "CHAT",
+              message: broadcastMsg
+            });
+            log(`📢 SYSTEM BROADCASTED: "${messageText}"`, "success");
+          } catch (e) {
+            log("📢 REJECTED: TRANSMISSION BUFFER OVERFLOWED. BROADCAST ABORTED.", "error");
+          }
+        } else {
+          log(`📢 LOCAL BROADCAST MODE: "${messageText}"`, "success");
+        }
+        break;
+      }
+
       default: {
         log(`REJECTED: UNRECOGNIZED PROTOCOL '${command}'. ENTER '/help' FOR CODES.`, "error");
         break;
       }
+    }
+  };
+
+  const handleCommandSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cmd = commandInput.trim();
+    if (!cmd) return;
+
+    log(`> ${cmd}`, "input");
+    setCommandInput("");
+    executeCommand(cmd);
+  };
+
+  const commandCategories = [
+    {
+      title: "🌌 SYSTEM OPERATIONS",
+      color: "text-emerald-400 border-emerald-500/20 bg-emerald-500/5",
+      commands: [
+        { name: "REVEAL CODES", command: "/reveal", description: "Exposes all secret registers", icon: "Eye" },
+        { name: "AUTO-SCRATCH", command: "/scratchall", description: "Flushes scratchpad with secret code", icon: "RefreshCw" },
+        { name: "FORCE WINNER", command: "/win", description: "Forces instant operational victory", icon: "Zap" },
+        { name: "UNDO MOVE", command: "/undo", description: "Reverts last guess (Single/Local)", icon: "ChevronRight" },
+      ]
+    },
+    {
+      title: "🧠 DEDUCTION NET",
+      color: "text-cyan-400 border-cyan-500/20 bg-cyan-500/5",
+      commands: [
+        { name: "SOLVE CONSTRAINTS", command: "/solve", description: "Extracts logical compatibility pool", icon: "Target" },
+        { name: "MATRIX HEAT MAP", command: "/matrixheat", description: "Spatial frequency distribution table", icon: "Database" },
+        { name: "SHANNON ENTROPY", command: "/entropy", description: "Calculates current uncertainty bits", icon: "FileCode" },
+        { name: "GET TACTICAL HINT", command: "/hint", description: "Reveals a calculated code clue", icon: "Sparkles" },
+      ]
+    },
+    {
+      title: "🛡️ NETWORK & SENSORS",
+      color: "text-amber-400 border-amber-500/20 bg-amber-500/5",
+      commands: [
+        { name: "PEEK SCRATCHPAD", command: "/peek", description: "Peers into opponent/AI thoughts", icon: "Shield" },
+        { name: "PING BEACON", command: "/ping", description: "Signal latency check diagnostics", icon: "Play" },
+        { name: "P2P DISCONNECT", command: "/disconnect", description: "Enforces terminal socket cutoff", icon: "Power" },
+        { name: "DUMP SYSTEM LOGS", command: "/logs", description: "Dumps raw match state memory", icon: "HelpCircle" },
+      ]
+    },
+    {
+      title: "🛰️ OVERRIDE & COMMS",
+      color: "text-rose-400 border-rose-500/20 bg-rose-500/5",
+      commands: [
+        { name: "INJECT NEW CODE", command: "/setcode", description: "Overrides secret register with 4-digit code", requiresArg: true, argPlaceholder: "e.g. 1395", icon: "Key" },
+        { name: "CHAT BROADCAST", command: "/broadcast", description: "Transmits system broadcast to peer", requiresArg: true, argPlaceholder: "e.g. Hello", icon: "MessageSquare" },
+        { name: "HELP DIRECTORY", command: "/help", description: "List standard operational codes", icon: "FileCode" },
+        { name: "PURGE BUFFER", command: "/clear", description: "Purges the system terminal logs", icon: "X" },
+      ]
+    }
+  ];
+
+  const handleCommandClick = (cmdItem: typeof commandCategories[0]["commands"][0]) => {
+    if (cmdItem.requiresArg) {
+      setCommandInput(cmdItem.command + " ");
+      log(`[CONSOLE]: PRE-FILLED ${cmdItem.command}. PLEASE SPECIFY PARAMETER (${cmdItem.argPlaceholder || "argument"}) AND PRESS ENTER TO EXECUTE.`, "info");
+      setActiveTab("terminal");
+    } else {
+      log(`> ${cmdItem.command}`, "input");
+      executeCommand(cmdItem.command);
+      setActiveTab("terminal");
     }
   };
 
@@ -406,13 +726,13 @@ export default function AdminConsole({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50 p-4"
+        className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in"
       >
         <motion.div
           initial={{ scale: 0.96, y: 10 }}
           animate={{ scale: 1, y: 0 }}
           exit={{ scale: 0.96, y: 10 }}
-          className="w-full max-w-2xl bg-slate-900 border border-emerald-500/30 rounded-2xl overflow-hidden shadow-[0_0_40px_rgba(16,185,129,0.15)] flex flex-col h-[520px] max-h-[85vh]"
+          className="w-full max-w-4xl bg-slate-900 border border-emerald-500/30 rounded-2xl overflow-hidden shadow-[0_0_40px_rgba(16,185,129,0.15)] flex flex-col h-[580px] max-h-[90vh]"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-5 py-4 bg-slate-950 border-b border-slate-800">
@@ -424,20 +744,18 @@ export default function AdminConsole({
                 <h3 className="font-mono text-xs font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
                   SECURE COMMAND CONSOLE
                   <span className="text-[8px] px-1.5 py-0.5 rounded bg-emerald-900/30 border border-emerald-500/30 text-emerald-300">
-                    ADMIN V1.2
+                    ADMIN V1.3
                   </span>
                 </h3>
                 <p className="font-mono text-[9px] text-slate-500 uppercase mt-0.5">
-                  Authorized operator debugging and logic solver terminal
+                  Authorized operator debugging, network operations and deductive solver panel
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               {onHideToggle && (
                 <button
-                  onClick={() => {
-                    onHideToggle();
-                  }}
+                  onClick={onHideToggle}
                   className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-amber-500 hover:text-amber-400 font-mono text-[9px] font-bold rounded-lg transition-colors cursor-pointer uppercase tracking-wider"
                   title="Obfuscate and hide the system trigger button"
                 >
@@ -453,77 +771,136 @@ export default function AdminConsole({
             </div>
           </div>
 
-          {/* Scrolling output log */}
-          <div className="flex-1 overflow-y-auto p-5 font-mono text-xs space-y-2 bg-slate-950">
-            {history.map((h, i) => (
-              <div
-                key={i}
-                className={`leading-relaxed break-words py-0.5 px-2 rounded ${
-                  h.type === "input"
-                    ? "text-slate-200 bg-slate-900/40 font-bold"
-                    : h.type === "success"
-                    ? "text-emerald-400 bg-emerald-950/10 border-l-2 border-emerald-500"
-                    : h.type === "error"
-                    ? "text-rose-400 bg-rose-950/10 border-l-2 border-rose-500"
-                    : h.type === "code"
-                    ? "text-cyan-400 bg-cyan-950/10 border-l-2 border-cyan-500"
-                    : h.type === "warning"
-                    ? "text-amber-400 bg-amber-950/10 border-l-2 border-amber-500"
-                    : "text-slate-400"
-                }`}
-              >
-                {h.text}
-              </div>
-            ))}
-            <div ref={consoleEndRef} />
-          </div>
-
-          {/* Quick Shortcuts Deck */}
-          <div className="px-5 py-3 bg-slate-900/40 border-t border-slate-800 flex items-center gap-2 flex-wrap">
-            <span className="text-[9px] font-mono font-bold text-slate-500 uppercase tracking-widest mr-2">
-              QUICK COMMANDS:
-            </span>
-            {[
-              { label: "REVEAL CODES", value: "/reveal" },
-              { label: "LOGICAL SOLVER", value: "/solve" },
-              { label: "AUTO SCRATCH", value: "/scratchall" },
-              { label: "WIN BATTLE", value: "/win" },
-            ].map((btn) => (
-              <button
-                key={btn.label}
-                type="button"
-                onClick={() => {
-                  setCommandInput(btn.value);
-                }}
-                className="px-2.5 py-1 bg-slate-950 hover:bg-emerald-950/30 text-slate-400 hover:text-emerald-400 border border-slate-800 hover:border-emerald-500/20 rounded-md text-[10px] font-mono transition-all cursor-pointer"
-              >
-                {btn.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Input line */}
-          <form onSubmit={handleCommandSubmit} className="flex border-t border-slate-800 bg-slate-950 p-3">
-            <div className="flex-1 relative flex items-center">
-              <span className="absolute left-3 text-emerald-500 font-mono text-sm font-bold animate-pulse">
-                &gt;
-              </span>
-              <input
-                type="text"
-                value={commandInput}
-                onChange={(e) => setCommandInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-4 py-3 text-emerald-400 font-mono text-xs focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-800 uppercase"
-                placeholder="ENTER IN-GAME PROTOCOL DIRECTIVE..."
-                autoFocus
-              />
-            </div>
+          {/* Mobile Tab Selector */}
+          <div className="flex md:hidden border-b border-slate-800 bg-slate-950 p-1">
             <button
-              type="submit"
-              className="ml-3 px-5 bg-emerald-950/40 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 hover:border-emerald-500 rounded-xl font-mono text-xs font-bold tracking-widest uppercase transition-all duration-300 flex items-center gap-2 cursor-pointer"
+              type="button"
+              onClick={() => setActiveTab("terminal")}
+              className={`flex-1 py-2 text-[10px] font-mono font-bold uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                activeTab === "terminal"
+                  ? "bg-emerald-950/40 border border-emerald-500/30 text-emerald-400"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
             >
-              EXECUTE
+              🖥️ TERMINAL CONSOLE ({history.length})
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => setActiveTab("commands")}
+              className={`flex-1 py-2 text-[10px] font-mono font-bold uppercase tracking-wider rounded-lg transition-all cursor-pointer ${
+                activeTab === "commands"
+                  ? "bg-emerald-950/40 border border-emerald-500/30 text-emerald-400"
+                  : "text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              🎛️ COMMAND DIRECTORY
+            </button>
+          </div>
+
+          {/* Responsive Split Pane Area */}
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0 bg-slate-950">
+            {/* Left Panel: Terminal System */}
+            <div className={`flex-1 flex flex-col h-full min-h-0 ${activeTab === "terminal" ? "flex" : "hidden md:flex"}`}>
+              {/* Scrolling output log */}
+              <div className="flex-1 overflow-y-auto p-5 font-mono text-xs space-y-2 bg-slate-950 min-h-0 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+                {history.map((h, i) => (
+                  <div
+                    key={i}
+                    className={`leading-relaxed break-words py-0.5 px-2 rounded font-mono ${
+                      h.type === "input"
+                        ? "text-slate-200 bg-slate-900/40 font-bold"
+                        : h.type === "success"
+                        ? "text-emerald-400 bg-emerald-950/10 border-l-2 border-emerald-500"
+                        : h.type === "error"
+                        ? "text-rose-400 bg-rose-950/10 border-l-2 border-rose-500"
+                        : h.type === "code"
+                        ? "text-cyan-400 bg-cyan-950/10 border-l-2 border-cyan-500 text-left font-semibold"
+                        : h.type === "warning"
+                        ? "text-amber-400 bg-amber-950/10 border-l-2 border-amber-500"
+                        : "text-slate-400"
+                    }`}
+                  >
+                    {h.type === "code" ? (
+                      <pre className="font-mono text-xs overflow-x-auto whitespace-pre leading-normal">
+                        {h.text}
+                      </pre>
+                    ) : (
+                      h.text
+                    )}
+                  </div>
+                ))}
+                <div ref={consoleEndRef} />
+              </div>
+
+              {/* Input Form at bottom of Terminal */}
+              <form onSubmit={handleCommandSubmit} className="flex border-t border-slate-800 bg-slate-950 p-3">
+                <div className="flex-1 relative flex items-center">
+                  <span className="absolute left-3 text-emerald-500 font-mono text-sm font-bold animate-pulse">
+                    &gt;
+                  </span>
+                  <input
+                    type="text"
+                    value={commandInput}
+                    onChange={(e) => setCommandInput(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-8 pr-4 py-3 text-emerald-400 font-mono text-xs focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-800 uppercase"
+                    placeholder="ENTER IN-GAME PROTOCOL DIRECTIVE..."
+                    autoFocus
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="ml-3 px-5 bg-emerald-950/40 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 hover:border-emerald-500 rounded-xl font-mono text-xs font-bold tracking-widest uppercase transition-all duration-300 flex items-center gap-2 cursor-pointer"
+                >
+                  EXECUTE
+                </button>
+              </form>
+            </div>
+
+            {/* Right Panel: Organized, Tab-Free Command Directory */}
+            <div className={`w-full md:w-96 border-t md:border-t-0 md:border-l border-slate-800 bg-slate-900/60 flex flex-col h-full overflow-hidden ${activeTab === "commands" ? "flex" : "hidden md:flex"}`}>
+              <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between">
+                <span className="text-[10px] font-mono font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 animate-pulse text-emerald-400" /> COMMAND DIRECTORY
+                </span>
+                <span className="text-[8px] font-mono text-slate-500 uppercase">TAPPING RUNS INSTANTLY</span>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-4 space-y-5 min-h-0 scrollbar-thin scrollbar-thumb-slate-800 scrollbar-track-transparent">
+                {commandCategories.map((cat, catIdx) => (
+                  <div key={catIdx} className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-[9px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded border ${cat.color}`}>
+                        {cat.title}
+                      </span>
+                      <div className="flex-1 h-px bg-slate-800" />
+                    </div>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {cat.commands.map((cmdItem) => (
+                        <button
+                          key={cmdItem.name}
+                          type="button"
+                          onClick={() => handleCommandClick(cmdItem)}
+                          className="w-full text-left p-2.5 bg-slate-950/60 hover:bg-slate-900 border border-slate-800/80 hover:border-emerald-500/30 rounded-xl transition-all flex flex-col gap-0.5 group cursor-pointer"
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <span className="font-mono text-[10px] font-bold text-slate-300 group-hover:text-emerald-400 transition-colors uppercase tracking-wider">
+                              {cmdItem.name}
+                            </span>
+                            <span className="font-mono text-[9px] text-slate-600 group-hover:text-emerald-500/60 transition-colors">
+                              {cmdItem.command}
+                            </span>
+                          </div>
+                          <p className="font-mono text-[9px] text-slate-500 group-hover:text-slate-400 transition-colors leading-normal">
+                            {cmdItem.description}
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </motion.div>
       </motion.div>
     </AnimatePresence>
