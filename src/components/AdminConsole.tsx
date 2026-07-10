@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import { Terminal, Shield, Play, ChevronRight, X, Sparkles, HelpCircle, AlertCircle, FileCode, Clock, RefreshCw, Key, Power, MessageSquare, Zap, Target, Eye, Database, Trash2, Edit3, Users } from "lucide-react";
 import { GameRoom, Guess, ScratchpadState, SinglePlayerState } from "../types";
 import { getLocalLeaderboard, saveLocalLeaderboard, getDeletedPlayerIds, saveDeletedPlayerIds, addDeletedPlayerId } from "../utils";
@@ -892,13 +892,12 @@ export default function AdminConsole({
   };
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in"
-      >
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fade-in"
+    >
         <motion.div
           initial={{ scale: 0.96, y: 10 }}
           animate={{ scale: 1, y: 0 }}
@@ -1350,6 +1349,5 @@ export default function AdminConsole({
           </div>
         </motion.div>
       </motion.div>
-    </AnimatePresence>
   );
 }

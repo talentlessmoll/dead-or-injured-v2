@@ -3202,27 +3202,31 @@ export default function App() {
       )}
 
       {/* SECURE COMMAND CONSOLE */}
-      <AdminConsole
-        isOpen={showAdminConsole}
-        onClose={() => setShowAdminConsole(false)}
-        gameMode={gameMode}
-        playerId={playerId}
-        activeRoom={activeRoom}
-        singlePlayer={singlePlayer}
-        localState={localState}
-        setSinglePlayer={setSinglePlayer}
-        setActiveRoom={setActiveRoom}
-        setLocalState={setLocalState}
-        setSingleScratch={setSingleScratch}
-        setOnlineScratch={setOnlineScratch}
-        setError={setError}
-        isConsoleHidden={isConsoleHidden}
-        onHideToggle={handleHideConsoleToggle}
-        revealedOpponentSecret={revealedOpponentSecret}
-        connRef={connRef}
-        onAdminForceWin={handleAdminForceWin}
-        onLeaderboardChange={() => setLeaderboardVersion((v) => v + 1)}
-      />
+      <AnimatePresence>
+        {showAdminConsole && (
+          <AdminConsole
+            isOpen={showAdminConsole}
+            onClose={() => setShowAdminConsole(false)}
+            gameMode={gameMode}
+            playerId={playerId}
+            activeRoom={activeRoom}
+            singlePlayer={singlePlayer}
+            localState={localState}
+            setSinglePlayer={setSinglePlayer}
+            setActiveRoom={setActiveRoom}
+            setLocalState={setLocalState}
+            setSingleScratch={setSingleScratch}
+            setOnlineScratch={setOnlineScratch}
+            setError={setError}
+            isConsoleHidden={isConsoleHidden}
+            onHideToggle={handleHideConsoleToggle}
+            revealedOpponentSecret={revealedOpponentSecret}
+            connRef={connRef}
+            onAdminForceWin={handleAdminForceWin}
+            onLeaderboardChange={() => setLeaderboardVersion((v) => v + 1)}
+          />
+        )}
+      </AnimatePresence>
 
       {/* DEV SYSTEM PORT TRIGGER */}
       {!showNameSetup && playerName.trim().toLowerCase() === "daddy-osayuki" && isConsoleUnlocked && (
