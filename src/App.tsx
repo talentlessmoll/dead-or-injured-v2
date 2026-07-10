@@ -95,6 +95,13 @@ function playPingSound() {
   }
 }
 
+// Map daddy-osayuki to daddy for display everywhere
+function formatName(name: string | null | undefined): string {
+  if (!name) return "";
+  const trimmed = name.trim();
+  return trimmed.toLowerCase() === "daddy-osayuki" ? "daddy" : trimmed;
+}
+
 // Robust JSON decoder to avoid crash on non-JSON HTML/empty responses
 async function safeParseJson<T = any>(response: Response): Promise<T> {
   const text = await response.text();
@@ -2054,7 +2061,7 @@ export default function App() {
               <span className="text-xs font-mono text-slate-400">
                 Opponent:{" "}
                 <span className="text-slate-100 font-bold uppercase">
-                  {activeRoom.players.find((p) => p.id !== playerId)?.name || "Opponent"}
+                  {formatName(activeRoom.players.find((p) => p.id !== playerId)?.name) || "Opponent"}
                 </span>
               </span>
             </div>
@@ -2135,7 +2142,7 @@ export default function App() {
                     guesses={activeRoom.guesses}
                     playerId={playerId}
                     opponentId={activeRoom.players.find((p) => p.id !== playerId)?.id || null}
-                    opponentName={activeRoom.players.find((p) => p.id !== playerId)?.name || "Opponent"}
+                    opponentName={formatName(activeRoom.players.find((p) => p.id !== playerId)?.name) || "Opponent"}
                     playerName="YOU"
                   />
                 </div>
@@ -2207,7 +2214,7 @@ export default function App() {
                       chatMessages.map((m) => (
                         <div key={m.id} className="leading-tight break-all">
                           <span className={m.senderId === playerId ? "text-emerald-400 font-bold" : "text-amber-400 font-bold"}>
-                            {m.senderName}:{" "}
+                            {formatName(m.senderName)}:{" "}
                           </span>
                           <span className="text-slate-300">{m.text}</span>
                         </div>
@@ -3032,7 +3039,7 @@ export default function App() {
             >
               <span className="text-5xl filter drop-shadow-[0_0_12px_rgba(255,255,255,0.4)]">{e.emoji}</span>
               <span className="bg-slate-950/90 border border-slate-800 text-[8px] font-mono font-bold px-1.5 py-0.5 rounded text-slate-300 mt-1 uppercase tracking-tight shadow-md">
-                {e.senderName}
+                {formatName(e.senderName)}
               </span>
             </motion.div>
           ))}

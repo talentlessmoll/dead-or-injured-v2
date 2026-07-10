@@ -212,7 +212,9 @@ export default function RoomLobby({ room, playerId, onLeave, onUpdateSettings }:
               >
                 <div className="flex items-center gap-3">
                   <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="font-mono text-sm font-medium text-slate-200">{p.name}</span>
+                  <span className="font-mono text-sm font-medium text-slate-200">
+                    {p.name.trim().toLowerCase() === "daddy-osayuki" ? "daddy" : p.name}
+                  </span>
                 </div>
                 <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
                   {p.id === playerId ? "CREATOR (YOU)" : "OPPONENT"}
