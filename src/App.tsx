@@ -62,6 +62,39 @@ function generatePlayerId(): string {
   return "p_" + Math.random().toString(36).substring(2, 11);
 }
 
+// Play subtle, crisp audio feedback using the Web Audio API
+function playPingSound() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    
+    const ctx = new AudioContextClass();
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
+
+    const osc = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    osc.type = "sine";
+    // Crisp 'ping' frequency: clear 1200Hz high note fading down quickly
+    osc.frequency.setValueAtTime(1200, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.15);
+
+    gainNode.gain.setValueAtTime(0, ctx.currentTime);
+    gainNode.gain.linearRampToValueAtTime(0.15, ctx.currentTime + 0.015); // rapid crisp attack
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3); // smooth high-end tail decay
+
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+  } catch (error) {
+    console.warn("Web Audio API not supported or interaction blocked", error);
+  }
+}
+
 // Robust JSON decoder to avoid crash on non-JSON HTML/empty responses
 async function safeParseJson<T = any>(response: Response): Promise<T> {
   const text = await response.text();
@@ -237,6 +270,53 @@ export default function App() {
       setRoomCodeInput(code);
     }
   }, [initialRoomToJoin, playerId]);
+
+  // Turn notification audio feedback refs and effects
+  const lastOnlineTurnRef = useRef<string | null>(null);
+  const lastLocalTurnRef = useRef<{ turn: string | null; handoffActive: boolean } | null>(null);
+  const lastSingleTurnRef = useRef<'player' | 'ai' | null>(null);
+
+  // 1. Online match turn detection
+  useEffect(() => {
+    if (gameMode === "online" && activeRoom && activeRoom.status === "playing") {
+      const isMyTurn = activeRoom.turn === playerId;
+      if (isMyTurn && lastOnlineTurnRef.current !== playerId) {
+        playPingSound();
+      }
+      lastOnlineTurnRef.current = activeRoom.turn;
+    } else {
+      lastOnlineTurnRef.current = null;
+    }
+  }, [activeRoom?.turn, activeRoom?.status, gameMode, playerId]);
+
+  // 2. Local pass & play match turn detection
+  useEffect(() => {
+    if (gameMode === "local" && localState && localState.status === "playing") {
+      const currentTurn = localState.turn;
+      const isHandoff = localState.handoffActive;
+      
+      if (!isHandoff && (lastLocalTurnRef.current?.handoffActive === true || lastLocalTurnRef.current?.turn !== currentTurn)) {
+        playPingSound();
+      }
+      
+      lastLocalTurnRef.current = { turn: currentTurn, handoffActive: isHandoff };
+    } else {
+      lastLocalTurnRef.current = null;
+    }
+  }, [localState?.turn, localState?.status, localState?.handoffActive, gameMode]);
+
+  // 3. Single player vs AI match turn detection
+  useEffect(() => {
+    if (gameMode === "single" && singlePlayer && singlePlayer.status === "playing") {
+      const currentTurn = singlePlayer.turn;
+      if (currentTurn === "player" && lastSingleTurnRef.current !== "player") {
+        playPingSound();
+      }
+      lastSingleTurnRef.current = currentTurn;
+    } else {
+      lastSingleTurnRef.current = null;
+    }
+  }, [singlePlayer?.turn, singlePlayer?.status, gameMode]);
 
   const loggedMatchesRef = useRef<Set<string>>(new Set());
 
