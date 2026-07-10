@@ -1,4 +1,48 @@
-import { Guess, LeaderboardRecord } from "./types";
+import { Guess, LeaderboardRecord, ScratchpadState } from "./types";
+
+// Get deduced code from positional matrix using smart logical deduction
+export function getDeducedCodeWithSmartInference(state: ScratchpadState): string[] {
+  const deduced = ["", "", "", ""];
+  const matrix = state.matrix || Array(10).fill(null).map(() => Array(4).fill("neutral"));
+  const explicitYesDigits = new Set<number>();
+  
+  // 1. Pass: Find explicit "yes" positions
+  for (let p = 0; p < 4; p++) {
+    for (let d = 0; d < 10; d++) {
+      if (matrix[d] && matrix[d][p] === "yes") {
+        deduced[p] = d.toString();
+        explicitYesDigits.add(d);
+        break;
+      }
+    }
+  }
+  
+  // 2. Pass: Smart Inference
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let p = 0; p < 4; p++) {
+      if (deduced[p] !== "") continue;
+      
+      const candidates: number[] = [];
+      for (let d = 0; d < 10; d++) {
+        if (explicitYesDigits.has(d)) continue;
+        if (matrix[d] && matrix[d][p] !== "no") {
+          candidates.push(d);
+        }
+      }
+      
+      if (candidates.length === 1) {
+        const inferredDigit = candidates[0];
+        deduced[p] = inferredDigit.toString();
+        explicitYesDigits.add(inferredDigit);
+        changed = true;
+      }
+    }
+  }
+  
+  return deduced;
+}
 
 // Check if string is 4 unique digits
 export function hasUniqueDigits(code: string): boolean {

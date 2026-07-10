@@ -1,5 +1,5 @@
 import React from "react";
-import { X, Delete, Check } from "lucide-react";
+import { Delete, Check } from "lucide-react";
 
 interface TactileKeyboardProps {
   value: string;
@@ -8,6 +8,8 @@ interface TactileKeyboardProps {
   title?: React.ReactNode;
   submitLabel?: string;
   disabled?: boolean;
+  lockedPattern?: string; // e.g. "  5 " (spaces represent empty, non-spaces represent locked deduced positions)
+  disabledDigits?: string[]; // digits that should be unclickable (marked as 'X' / eliminated in matrix)
 }
 
 export default function TactileKeyboard({
@@ -17,30 +19,73 @@ export default function TactileKeyboard({
   title = "ENTER DIGITS",
   submitLabel = "SUBMIT PROTOCOL",
   disabled = false,
+  lockedPattern = "    ",
+  disabledDigits = [],
 }: TactileKeyboardProps) {
-  const currentDigits = value.split("");
+  const locked = lockedPattern.split("");
+  const currentDigits = Array(4).fill(" ");
+
+  // Ensure locked positions are populated, then populate other positions from value
+  const lockedSet = new Set(locked.filter(c => c !== " "));
+  for (let i = 0; i < 4; i++) {
+    if (locked[i] && locked[i] !== " ") {
+      currentDigits[i] = locked[i];
+    } else if (value[i] && value[i] !== " ") {
+      // Clear value digit if it duplicates any locked digits
+      if (lockedSet.has(value[i])) {
+        currentDigits[i] = " ";
+      } else {
+        currentDigits[i] = value[i];
+      }
+    }
+  }
 
   const handleKeyPress = (digit: string) => {
     if (disabled) return;
-    if (currentDigits.length >= 4) return;
+    
     // Enforce the Golden Rule: No repeats!
     if (currentDigits.includes(digit)) return;
 
-    onChange(value + digit);
+    // Find the first empty slot that is not locked
+    const nextEmptyIdx = currentDigits.findIndex((char, idx) => char === " " && (!locked[idx] || locked[idx] === " "));
+    if (nextEmptyIdx !== -1) {
+      const newDigits = [...currentDigits];
+      newDigits[nextEmptyIdx] = digit;
+      onChange(newDigits.join(""));
+    }
   };
 
   const handleBackspace = () => {
     if (disabled) return;
-    if (value.length === 0) return;
-    onChange(value.slice(0, -1));
+    
+    // Find the rightmost filled slot that is not locked
+    let targetIdx = -1;
+    for (let i = 3; i >= 0; i--) {
+      if (currentDigits[i] !== " " && (!locked[i] || locked[i] === " ")) {
+        targetIdx = i;
+        break;
+      }
+    }
+
+    if (targetIdx !== -1) {
+      const newDigits = [...currentDigits];
+      newDigits[targetIdx] = " ";
+      onChange(newDigits.join(""));
+    }
   };
 
   const handleClear = () => {
     if (disabled) return;
-    onChange("");
+    // Clear user-typed digits but preserve the locked ones from scratchpad deduction
+    const newDigits = currentDigits.map((char, idx) => {
+      return (locked[idx] && locked[idx] !== " ") ? locked[idx] : " ";
+    });
+    onChange(newDigits.join(""));
   };
 
-  const isSubmitDisabled = disabled || value.length !== 4;
+  const isSubmitDisabled = disabled || currentDigits.some(char => char === " ");
+
+  const nextActiveIdx = currentDigits.findIndex((char, idx) => char === " " && (!locked[idx] || locked[idx] === " "));
 
   return (
     <div className="w-full bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-col items-center">
@@ -52,20 +97,37 @@ export default function TactileKeyboard({
       <div className="flex gap-3 mb-5">
         {Array.from({ length: 4 }).map((_, i) => {
           const digit = currentDigits[i];
-          const isActive = currentDigits.length === i;
+          const isLocked = locked[i] && locked[i] !== " ";
+          const isActive = !disabled && nextActiveIdx === i;
 
           return (
             <div
               key={i}
-              className={`w-12 h-14 border rounded-xl flex items-center justify-center font-mono text-2xl font-bold transition-all duration-150 ${
-                digit
-                  ? "bg-slate-950 border-emerald-500/50 text-emerald-400 text-glow"
+              onClick={() => {
+                if (disabled) return;
+                // Tap to clear non-locked filled digits
+                if (digit && digit !== " " && !isLocked) {
+                  const newDigits = [...currentDigits];
+                  newDigits[i] = " ";
+                  onChange(newDigits.join(""));
+                }
+              }}
+              className={`w-12 h-14 border rounded-xl flex items-center justify-center font-mono text-2xl font-bold transition-all duration-150 relative select-none ${
+                digit && digit !== " "
+                  ? isLocked
+                    ? "bg-slate-950 border-cyan-500/50 text-cyan-400 text-glow"
+                    : "bg-slate-950 border-emerald-500/50 text-emerald-400 text-glow cursor-pointer hover:border-red-500/50 hover:text-red-400"
                   : isActive
                   ? "bg-slate-900 border-slate-600 animate-pulse"
                   : "bg-slate-950 border-slate-800 text-slate-700"
               }`}
             >
-              {digit || "•"}
+              {digit && digit !== " " ? digit : "•"}
+              {isLocked && (
+                <span className="absolute top-1 right-1 text-[8px] leading-none" title="Deductive Locked">
+                  🔒
+                </span>
+              )}
             </div>
           );
         })}
@@ -78,17 +140,21 @@ export default function TactileKeyboard({
           {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => {
             const digitStr = digit.toString();
             const isUsed = currentDigits.includes(digitStr);
+            const isEliminated = disabledDigits?.includes(digitStr);
+            const isBtnDisabled = disabled || isUsed || isEliminated;
 
             return (
               <button
                 key={digit}
                 type="button"
                 onClick={() => handleKeyPress(digitStr)}
-                disabled={disabled || isUsed}
-                className={`h-12 rounded-lg font-mono text-lg font-semibold flex items-center justify-center border transition-all cursor-pointer select-none ${
+                disabled={isBtnDisabled}
+                className={`h-12 rounded-lg font-mono text-lg font-semibold flex items-center justify-center border transition-all select-none ${
                   isUsed
-                    ? "bg-slate-950/40 border-slate-950/60 text-slate-800"
-                    : "bg-slate-900/80 border-slate-800 text-slate-200 hover:bg-slate-800 hover:border-slate-700 active:scale-95"
+                    ? "bg-slate-950/40 border-slate-950/60 text-slate-800 cursor-not-allowed"
+                    : isEliminated
+                    ? "bg-slate-950/30 border-red-950/20 text-red-900/40 line-through decoration-red-900/40 cursor-not-allowed opacity-30 animate-pulse"
+                    : "bg-slate-900/80 border-slate-800 text-slate-200 hover:bg-slate-800 hover:border-slate-700 active:scale-95 cursor-pointer"
                 }`}
               >
                 {digit}
@@ -100,7 +166,7 @@ export default function TactileKeyboard({
           <button
             type="button"
             onClick={handleClear}
-            disabled={disabled || value.length === 0}
+            disabled={disabled || currentDigits.every((char, idx) => char === " " || (locked[idx] && locked[idx] !== " "))}
             className="h-12 rounded-lg font-mono text-xs font-medium flex items-center justify-center border bg-slate-900/40 border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-slate-200 active:scale-95 disabled:opacity-40 cursor-pointer select-none"
           >
             CLEAR
@@ -109,11 +175,13 @@ export default function TactileKeyboard({
           <button
             type="button"
             onClick={() => handleKeyPress("0")}
-            disabled={disabled || currentDigits.includes("0")}
-            className={`h-12 rounded-lg font-mono text-lg font-semibold flex items-center justify-center border transition-all cursor-pointer select-none ${
+            disabled={disabled || currentDigits.includes("0") || disabledDigits?.includes("0")}
+            className={`h-12 rounded-lg font-mono text-lg font-semibold flex items-center justify-center border transition-all select-none ${
               currentDigits.includes("0")
-                ? "bg-slate-950/40 border-slate-950/60 text-slate-800"
-                : "bg-slate-900/80 border-slate-800 text-slate-200 hover:bg-slate-800 hover:border-slate-700 active:scale-95"
+                ? "bg-slate-950/40 border-slate-950/60 text-slate-800 cursor-not-allowed"
+                : disabledDigits?.includes("0")
+                ? "bg-slate-950/30 border-red-950/20 text-red-900/40 line-through decoration-red-900/40 cursor-not-allowed opacity-30 animate-pulse"
+                : "bg-slate-900/80 border-slate-800 text-slate-200 hover:bg-slate-800 hover:border-slate-700 active:scale-95 cursor-pointer"
             }`}
           >
             0
@@ -122,7 +190,7 @@ export default function TactileKeyboard({
           <button
             type="button"
             onClick={handleBackspace}
-            disabled={disabled || value.length === 0}
+            disabled={disabled || currentDigits.every((char, idx) => char === " " || (locked[idx] && locked[idx] !== " "))}
             className="h-12 rounded-lg font-mono text-lg font-semibold flex items-center justify-center border bg-slate-900/40 border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-slate-200 active:scale-95 disabled:opacity-40 cursor-pointer select-none"
           >
             <Delete className="w-5 h-5" />

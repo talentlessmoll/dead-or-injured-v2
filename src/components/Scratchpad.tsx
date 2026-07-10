@@ -1,8 +1,10 @@
 import React, { useState } from "react";
-import { X, Check, HelpCircle, FileText, Grid, Hash, RotateCcw, AlertCircle, Zap } from "lucide-react";
+import { X, Check, HelpCircle, FileText, Grid, Hash, RotateCcw, AlertCircle, Zap, Undo } from "lucide-react";
 import { ScratchpadState } from "../types";
+import { getDeducedCodeWithSmartInference } from "../utils";
 
 interface ScratchpadProps {
+  key?: React.Key;
   state: ScratchpadState;
   onChange: (newState: ScratchpadState) => void;
   onAutofill?: (code: string) => void;
@@ -10,63 +12,31 @@ interface ScratchpadProps {
 
 export default function Scratchpad({ state, onChange, onAutofill }: ScratchpadProps) {
   const [activeTab, setActiveTab] = useState<"matrix" | "digits">("matrix");
+  const [history, setHistory] = useState<ScratchpadState[]>([]);
 
   // Ensure matrix is initialized (for backwards compatibility if state loaded from legacy)
   const matrix = state.matrix || Array(10).fill(null).map(() => Array(4).fill("neutral"));
 
-  // Find deduced digits from the matrix using standard and smart logical deduction
-  const getDeducedCodeWithSmartInference = (): string[] => {
-    let deduced = ["", "", "", ""];
-    const explicitYesDigits = new Set<number>();
-    
-    // 1. Pass: Find explicit "yes" positions
-    for (let p = 0; p < 4; p++) {
-      for (let d = 0; d < 10; d++) {
-        if (matrix[d] && matrix[d][p] === "yes") {
-          deduced[p] = d.toString();
-          explicitYesDigits.add(d);
-          break;
-        }
-      }
-    }
-    
-    // 2. Pass: Smart Inference
-    // For each position that is still empty, let's find which digits can possibly go there.
-    // A digit can go to position p if:
-    // - matrix[d][p] !== "no"
-    // - d is not already explicitly confirmed in another position
-    // If there is exactly one such digit, we can infer it!
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (let p = 0; p < 4; p++) {
-        if (deduced[p] !== "") continue;
-        
-        const candidates: number[] = [];
-        for (let d = 0; d < 10; d++) {
-          if (explicitYesDigits.has(d)) continue;
-          if (matrix[d] && matrix[d][p] !== "no") {
-            candidates.push(d);
-          }
-        }
-        
-        if (candidates.length === 1) {
-          const inferredDigit = candidates[0];
-          deduced[p] = inferredDigit.toString();
-          explicitYesDigits.add(inferredDigit);
-          changed = true;
-        }
-      }
-    }
-    
-    return deduced;
-  };
-
-  const deducedArray = getDeducedCodeWithSmartInference();
-  const deducedCode = deducedArray.join("");
+  const deducedArray = getDeducedCodeWithSmartInference(state);
+  // Ensure we map empty positions to spaces so positions are preserved (e.g. "  5 ")
+  const deducedCode = deducedArray.map(c => c || " ").join("");
   const hasDeducedDigits = deducedArray.some(c => c !== "");
 
+  // Deep clone helper for state to avoid mutating nested arrays in history
+  const cloneState = (s: ScratchpadState): ScratchpadState => {
+    return {
+      eliminated: [...s.eliminated],
+      confirmed: [...s.confirmed],
+      maybe: [...s.maybe],
+      notes: s.notes,
+      matrix: s.matrix ? s.matrix.map(row => [...row]) : undefined
+    };
+  };
+
   const handleDigitClick = (idx: number) => {
+    // Record current state before changing
+    setHistory(prev => [...prev, cloneState(state)]);
+
     const eliminated = [...state.eliminated];
     const confirmed = [...state.confirmed];
     const maybe = [...state.maybe];
@@ -110,6 +80,9 @@ export default function Scratchpad({ state, onChange, onAutofill }: ScratchpadPr
 
   // Matrix Position Click Handler
   const handleMatrixCellClick = (digit: number, posIndex: number) => {
+    // Record current state before changing
+    setHistory(prev => [...prev, cloneState(state)]);
+
     const newMatrix = matrix.map((row) => [...row]);
     const currentVal = newMatrix[digit][posIndex];
 
@@ -160,6 +133,9 @@ export default function Scratchpad({ state, onChange, onAutofill }: ScratchpadPr
   };
 
   const resetScratchpad = () => {
+    // Record current state before changing
+    setHistory(prev => [...prev, cloneState(state)]);
+
     onChange({
       eliminated: Array(10).fill(false),
       confirmed: Array(10).fill(false),
@@ -167,6 +143,13 @@ export default function Scratchpad({ state, onChange, onAutofill }: ScratchpadPr
       notes: "",
       matrix: Array(10).fill(null).map(() => Array(4).fill("neutral")),
     });
+  };
+
+  const handleUndo = () => {
+    if (history.length === 0) return;
+    const previousState = history[history.length - 1];
+    setHistory(prev => prev.slice(0, -1));
+    onChange(previousState);
   };
 
   const getMatrixCellClasses = (digit: number, posIndex: number) => {
@@ -187,12 +170,28 @@ export default function Scratchpad({ state, onChange, onAutofill }: ScratchpadPr
         <h3 className="text-xs font-mono font-bold tracking-wider text-slate-400 flex items-center gap-1.5 uppercase">
           <Grid className="w-3.5 h-3.5 text-emerald-400" /> DEDUCTIVE MATRIX
         </h3>
-        <button
-          onClick={resetScratchpad}
-          className="text-[10px] font-mono text-slate-500 hover:text-slate-300 uppercase cursor-pointer flex items-center gap-1 transition-colors"
-        >
-          <RotateCcw className="w-3 h-3" /> Reset Ledger
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleUndo}
+            disabled={history.length === 0}
+            type="button"
+            className={`text-[10px] font-mono uppercase flex items-center gap-1 transition-colors select-none ${
+              history.length > 0
+                ? "text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                : "text-slate-700 cursor-not-allowed"
+            }`}
+            title="Undo last matrix decision & consequences"
+          >
+            <Undo className="w-3 h-3" /> Undo Action
+          </button>
+          <button
+            onClick={resetScratchpad}
+            type="button"
+            className="text-[10px] font-mono text-slate-500 hover:text-slate-300 uppercase cursor-pointer flex items-center gap-1 transition-colors select-none"
+          >
+            <RotateCcw className="w-3 h-3" /> Reset Ledger
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

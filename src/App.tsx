@@ -43,6 +43,7 @@ import {
   getLocalLeaderboard,
   saveLocalLeaderboard,
   getAIGuessByPersonality,
+  getDeducedCodeWithSmartInference,
 } from "./utils";
 
 import { AI_PERSONALITIES } from "./aiPersonalities";
@@ -890,10 +891,13 @@ export default function App() {
           });
 
           // Deduplicate
-          const exists = prevRoom.guesses.some(
-            (g) => g.code === data.guess.code && g.playerId === data.guess.playerId
-          );
-          const updatedGuesses = exists ? prevRoom.guesses : [...prevRoom.guesses, data.guess];
+          let updatedGuesses = prevRoom.guesses;
+          if (data.guess) {
+            const exists = prevRoom.guesses.some(
+              (g) => g.code === data.guess.code && g.playerId === data.guess.playerId
+            );
+            updatedGuesses = exists ? prevRoom.guesses : [...prevRoom.guesses, data.guess];
+          }
 
           return {
             ...prevRoom,
@@ -2062,6 +2066,8 @@ export default function App() {
                   onChange={setDraftCode}
                   onSubmit={handleOnlineGuessSubmit}
                   disabled={activeRoom.turn !== playerId}
+                  lockedPattern={getDeducedCodeWithSmartInference(onlineScratch).map(c => c || " ").join("")}
+                  disabledDigits={onlineScratch.eliminated.map((elim, idx) => elim ? idx.toString() : "").filter(Boolean)}
                   title={
                     activeRoom.turn === playerId ? (
                       <span className="text-emerald-400 font-extrabold flex items-center gap-1.5 animate-pulse">
@@ -2102,7 +2108,7 @@ export default function App() {
 
               {/* Right Column: Scratchpad and Chat */}
               <div className="col-span-12 md:col-span-5 flex flex-col gap-4">
-                <Scratchpad state={onlineScratch} onChange={setOnlineScratch} onAutofill={setDraftCode} />
+                <Scratchpad key="online" state={onlineScratch} onChange={setOnlineScratch} onAutofill={setDraftCode} />
 
                 {/* Match Chat System (deleted after game) */}
                 <div className="bg-slate-900/40 border border-slate-900 rounded-xl p-4 flex flex-col h-[280px]">
@@ -2401,6 +2407,8 @@ export default function App() {
                   onChange={setDraftCode}
                   onSubmit={handleSingleGuessSubmit}
                   disabled={singlePlayer.turn !== "player" || aiThinking}
+                  lockedPattern={getDeducedCodeWithSmartInference(singleScratch).map(c => c || " ").join("")}
+                  disabledDigits={singleScratch.eliminated.map((elim, idx) => elim ? idx.toString() : "").filter(Boolean)}
                   title={
                     singlePlayer.turn === "player"
                       ? "YOUR TURN: ENTER 4-DIGIT CODE TO GUESS"
@@ -2433,7 +2441,7 @@ export default function App() {
 
               {/* Right Column: Scratchpad (Sticky) */}
               <div className="col-span-12 md:col-span-5 flex flex-col gap-4">
-                <Scratchpad state={singleScratch} onChange={setSingleScratch} onAutofill={setDraftCode} />
+                <Scratchpad key="single" state={singleScratch} onChange={setSingleScratch} onAutofill={setDraftCode} />
               </div>
             </>
           )}
@@ -2632,6 +2640,8 @@ export default function App() {
                       value={draftCode}
                       onChange={setDraftCode}
                       onSubmit={handleLocalGuessSubmit}
+                      lockedPattern={getDeducedCodeWithSmartInference(localState.turn === "p1" ? localState.p1Scratch : localState.p2Scratch).map(c => c || " ").join("")}
+                      disabledDigits={(localState.turn === "p1" ? localState.p1Scratch : localState.p2Scratch).eliminated.map((elim, idx) => elim ? idx.toString() : "").filter(Boolean)}
                       title={`${
                         localState.turn === "p1" ? localState.p1Name : localState.p2Name
                       }: INPUT GUESS`}
@@ -2642,6 +2652,7 @@ export default function App() {
                   {/* Right Column: Scratchpad */}
                   <div className="col-span-12 md:col-span-5 flex flex-col gap-4">
                     <Scratchpad
+                      key={`local-${localState.turn}`}
                       state={localState.turn === "p1" ? localState.p1Scratch : localState.p2Scratch}
                       onChange={(newScratch) => {
                         setLocalState({
