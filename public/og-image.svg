@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <defs>
+    <!-- Background starburst gradient/colors -->
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+
+    <!-- Chalk / sketch pattern to simulate the organic hand-drawn fill of the vault -->
+    <pattern id="sketchLines" width="20" height="20" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+      <line x1="0" y1="0" x2="0" y2="20" stroke="white" stroke-width="3" opacity="0.85" />
+      <line x1="5" y1="0" x2="5" y2="20" stroke="white" stroke-width="1.5" opacity="0.4" />
+      <line x1="10" y1="0" x2="10" y2="20" stroke="white" stroke-width="2.5" opacity="0.7" />
+      <line x1="15" y1="0" x2="15" y2="20" stroke="white" stroke-width="1" opacity="0.3" />
+    </pattern>
+  </defs>
+
+  <!-- Base Background: White -->
+  <rect width="1200" height="630" fill="#ffffff" />
+
+  <!-- Dynamic Jagged Sunburst / Lightning Bolts extending from the center (600, 315) -->
+  <g>
+    <!-- Deep Blue Bolts -->
+    <path d="M 600 315 L 750 -100 L 920 -100 Z" fill="#0f5b8c" />
+    <path d="M 600 315 L 1050 -50 L 1250 80 Z" fill="#0d3e5e" />
+    <path d="M 600 315 L 1250 200 L 1250 350 Z" fill="#0f5b8c" />
+    <path d="M 600 315 L 1250 480 L 1100 700 L 980 700 Z" fill="#0d3e5e" />
+    <path d="M 600 315 L 850 700 L 680 700 Z" fill="#0f5b8c" />
+    <path d="M 600 315 L 500 700 L 350 700 Z" fill="#0d3e5e" />
+    <path d="M 600 315 L 150 700 L -50 580 Z" fill="#0f5b8c" />
+    <path d="M 600 315 L -100 450 L -100 300 Z" fill="#0d3e5e" />
+    <path d="M 600 315 L -100 180 L -50 -50 Z" fill="#0f5b8c" />
+    <path d="M 600 315 L 150 -100 L 320 -100 Z" fill="#0d3e5e" />
+
+    <!-- Bright Blue Bolts -->
+    <path d="M 600 315 L 450 -100 L 620 -100 L 590 50 Z" fill="#2b8cc4" />
+    <path d="M 600 315 L 920 -100 L 1080 -100 L 800 180 Z" fill="#2b8cc4" />
+    <path d="M 600 315 L 1250 80 L 1250 210 L 900 280 Z" fill="#2fa5db" />
+    <path d="M 600 315 L 1250 350 L 1250 490 L 850 380 Z" fill="#2b8cc4" />
+    <path d="M 600 315 L 980 700 L 820 700 L 720 480 Z" fill="#2fa5db" />
+    <path d="M 600 315 L 680 700 L 520 700 Z" fill="#2b8cc4" />
+    <path d="M 600 315 L 350 700 L 210 700 Z" fill="#2fa5db" />
+    <path d="M 600 315 L -50 580 L -100 420 Z" fill="#2b8cc4" />
+    <path d="M 600 315 L -100 300 L -100 150 L 200 250 Z" fill="#2fa5db" />
+    <path d="M 600 315 L -50 -50 L 120 -100 L 380 120 Z" fill="#2b8cc4" />
+
+    <!-- Vibrant Teal / Cyan Bolts -->
+    <path d="M 600 315 L 300 -100 L 480 -100 L 450 80 Z" fill="#0ca2a6" />
+    <path d="M 600 315 L 600 -100 L 780 -100 L 680 100 Z" fill="#14b8a6" />
+    <path d="M 600 315 L 1050 -100 L 1250 -50 Z" fill="#0ca2a6" />
+    <path d="M 600 315 L 1250 200 L 1250 380 L 1000 300 Z" fill="#14b8a6" />
+    <path d="M 600 315 L 1100 700 L 1250 600 L 1250 450 Z" fill="#0ca2a6" />
+    <path d="M 600 315 L 800 700 L 900 700 Z" fill="#14b8a6" />
+    <path d="M 600 315 L 250 700 L 100 700 L 300 450 Z" fill="#0ca2a6" />
+    <path d="M 600 315 L -100 550 L -100 650 L 180 500 Z" fill="#14b8a6" />
+    <path d="M 600 315 L -100 100 L -50 -100 L 150 100 Z" fill="#0ca2a6" />
+  </g>
+
+  <!-- Large Center Circle Emblem (Dark Slate Blue) -->
+  <circle cx="600" cy="315" r="150" fill="#09344f" />
+
+  <!-- Stylized Vault Icon: Divided Hexagonal Shape with Sketch/Chalk Texture -->
+  <g transform="translate(600, 315)">
+    <!-- LEFT HALF (Safe Face) -->
+    <!-- Outer Vault Outline with Chalk Texture -->
+    <path d="M -8 -80 L -68 -45 L -68 45 L -8 80 Z" fill="url(#sketchLines)" stroke="white" stroke-width="4" stroke-linejoin="round" />
+    
+    <!-- Vault Turning Wheel Handle -->
+    <g transform="translate(-38, 0)">
+      <!-- Central Wheel Circle -->
+      <circle cx="0" cy="0" r="18" fill="none" stroke="white" stroke-width="6" />
+      <circle cx="0" cy="0" r="8" fill="white" />
+      
+      <!-- Spoke 1 (Up-Left) -->
+      <line x1="-12" y1="-12" x2="-28" y2="-28" stroke="white" stroke-width="7" stroke-linecap="round" />
+      <circle cx="-28" cy="-28" r="4" fill="white" />
+      
+      <!-- Spoke 2 (Down-Left) -->
+      <line x1="-12" y1="12" x2="-28" y2="28" stroke="white" stroke-width="7" stroke-linecap="round" />
+      <circle cx="-28" cy="28" r="4" fill="white" />
+      
+      <!-- Spoke 3 (Right) -->
+      <line x1="12" y1="0" x2="28" y2="0" stroke="white" stroke-width="7" stroke-linecap="round" />
+      <circle cx="28" cy="0" r="4" fill="white" />
+    </g>
+
+    <!-- RIGHT HALF (Secure Drawers) -->
+    <!-- Top Drawer Box -->
+    <path d="M 8 -80 L 68 -45 L 68 -8 L 8 -8 Z" fill="url(#sketchLines)" stroke="white" stroke-width="4" stroke-linejoin="round" />
+    <!-- Top Drawer Handle Pill Slot -->
+    <rect x="24" y="-48" width="28" height="10" rx="5" fill="#09344f" transform="skewX(30)" />
+
+    <!-- Bottom Drawer Box -->
+    <path d="M 8 8 L 68 8 L 68 45 L 8 80 Z" fill="url(#sketchLines)" stroke="white" stroke-width="4" stroke-linejoin="round" />
+    <!-- Bottom Drawer Handle Pill Slot -->
+    <rect x="24" y="24" width="28" height="10" rx="5" fill="#09344f" transform="skewX(-30)" />
+  </g>
+</svg>
