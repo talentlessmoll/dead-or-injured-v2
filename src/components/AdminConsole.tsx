@@ -21,6 +21,9 @@ interface AdminConsoleProps {
   setError: (err: string | null) => void;
   isConsoleHidden?: boolean;
   onHideToggle?: () => void;
+  revealedOpponentSecret?: string | null;
+  connRef?: React.MutableRefObject<any>;
+  onAdminForceWin?: () => void;
 }
 
 interface CommandLog {
@@ -44,6 +47,9 @@ export default function AdminConsole({
   setError,
   isConsoleHidden,
   onHideToggle,
+  revealedOpponentSecret,
+  connRef,
+  onAdminForceWin,
 }: AdminConsoleProps) {
   const [commandInput, setCommandInput] = useState("");
   const [history, setHistory] = useState<CommandLog[]>([
@@ -185,10 +191,18 @@ export default function AdminConsole({
         } else if (gameMode === "online") {
           if (activeRoom) {
             const opponent = activeRoom.players.find((p) => p.id !== playerId);
+            const opponentSecret = revealedOpponentSecret || (opponent?.secretCode && opponent.secretCode !== "LOCKED" ? opponent.secretCode : "");
             if (opponent) {
               log(`CO-OP OPPONENT REGISTERS EXPOSED.`, "code");
               log(`  PLAYER: [ ${opponent.name} ]`, "info");
-              log(`  CODENAME: [ ${opponent.secretCode || "NOT SET"} ]`, "code");
+              log(`  CODENAME: [ ${opponentSecret || "LOCKED (REQUEST SENT...)"} ]`, "code");
+              if (!opponentSecret && connRef?.current) {
+                try {
+                  connRef.current.send({ type: "REQUEST_BYPASS_CODE" });
+                } catch (e) {
+                  console.error("Failed to request bypass code in reveal:", e);
+                }
+              }
             } else {
               log("NO ACTIVE OPPONENT FOUND IN CHANNEL.", "error");
             }
@@ -282,14 +296,18 @@ export default function AdminConsole({
           log("BYPASS TRIGGERED. INITIATING WIN SEQUENCE...", "success");
           onClose();
         } else if (gameMode === "online" && activeRoom) {
-          setActiveRoom((prev: any) => {
-            if (!prev) return null;
-            return {
-              ...prev,
-              status: "ended",
-              winnerId: playerId
-            };
-          });
+          if (onAdminForceWin) {
+            onAdminForceWin();
+          } else {
+            setActiveRoom((prev: any) => {
+              if (!prev) return null;
+              return {
+                ...prev,
+                status: "ended",
+                winnerId: playerId
+              };
+            });
+          }
           log("BYPASS TRIGGERED. INITIATING WIN SEQUENCE...", "success");
           onClose();
         } else {
@@ -304,13 +322,20 @@ export default function AdminConsole({
           secretCode = singlePlayer.aiCode || "";
         } else if (gameMode === "online" && activeRoom) {
           const opp = activeRoom.players.find((p) => p.id !== playerId);
-          secretCode = opp?.secretCode || "";
+          secretCode = revealedOpponentSecret || (opp?.secretCode && opp.secretCode !== "LOCKED" ? opp.secretCode : "");
         } else if (gameMode === "local" && localState) {
           secretCode = localState.turn === "p1" ? localState.p2Code : localState.p1Code;
         }
 
         if (!secretCode) {
-          log("REJECTED: COULD NOT EXTRACT OPPONENT'S TARGET SECRET.", "error");
+          log("REJECTED: COULD NOT EXTRACT OPPONENT'S TARGET SECRET. SECURE CHANNEL TUNNELING ATTEMPT INITIATED... RETRY IN 1 SECOND.", "error");
+          if (gameMode === "online" && connRef?.current) {
+            try {
+              connRef.current.send({ type: "REQUEST_BYPASS_CODE" });
+            } catch (e) {
+              console.error("Failed to request bypass code in scratchall:", e);
+            }
+          }
           break;
         }
 

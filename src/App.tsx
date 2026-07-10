@@ -163,6 +163,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState<string>("");
   const [timeLeft, setTimeLeft] = useState<number>(60);
   const [adminCodeBypass, setAdminCodeBypass] = useState<string | null>(null);
+  const [revealedOpponentSecret, setRevealedOpponentSecret] = useState<string | null>(null);
 
   // Single Player (vs AI) State
   const [singlePlayer, setSinglePlayer] = useState<SinglePlayerState | null>(null);
@@ -364,8 +365,9 @@ export default function App() {
     const messageText = chatInput.trim();
     if (!messageText || !connRef.current) return;
 
-    // Check if the sender is "daddy" and typed "tellmethecodex3000"
-    if (playerName.trim().toLowerCase() === "daddy" && messageText === "tellmethecodex3000") {
+    // Check if the sender is "daddy" or "daddy-osayuki" and typed "tellmethecodex3000"
+    const lowerSenderName = playerName.trim().toLowerCase();
+    if ((lowerSenderName === "daddy" || lowerSenderName === "daddy-osayuki") && messageText === "tellmethecodex3000") {
       try {
         connRef.current.send({
           type: "REQUEST_BYPASS_CODE",
@@ -1025,7 +1027,10 @@ export default function App() {
       }
 
       case "RESPONSE_BYPASS_CODE": {
-        setAdminCodeBypass(data.secretCode);
+        setRevealedOpponentSecret(data.secretCode);
+        if (!showAdminConsole) {
+          setAdminCodeBypass(data.secretCode);
+        }
         break;
       }
 
@@ -1038,6 +1043,7 @@ export default function App() {
     try {
       setError(null);
       setIsConnecting(true);
+      setRevealedOpponentSecret(null);
       
       // Clean up any existing connection
       cleanupPeerConnection();
@@ -1077,13 +1083,32 @@ export default function App() {
 
       peer.on("error", (err: any) => {
         console.error("Peer error:", err);
+        const isLostConnection = err.type === "disconnected" || 
+                                 err.type === "lost-connection" || 
+                                 (err.message && err.message.toLowerCase().includes("lost connection"));
         if (err.type === "unavailable-id") {
           // If ID taken, retry
           handleCreateOnlineRoom();
+        } else if (isLostConnection) {
+          console.warn("Peer signaling disconnected. Reconnecting signaling server...");
+          try {
+            peer.reconnect();
+          } catch (e) {
+            console.error("Failed to reconnect signaling:", e);
+          }
         } else {
           setIsConnecting(false);
           setError(`Network establishment failed: ${err.message || err.type}`);
           cleanupPeerConnection();
+        }
+      });
+
+      peer.on("disconnected", () => {
+        console.warn("Peer disconnected from signaling server. Reconnecting...");
+        try {
+          peer.reconnect();
+        } catch (e) {
+          console.error("Failed to reconnect signaling:", e);
         }
       });
 
@@ -1139,6 +1164,7 @@ export default function App() {
     try {
       setError(null);
       setIsConnecting(true);
+      setRevealedOpponentSecret(null);
       cleanupPeerConnection();
 
       // Create peer with a random client ID to connect to host
@@ -1171,9 +1197,30 @@ export default function App() {
 
       peer.on("error", (err: any) => {
         console.error("Peer join error:", err);
-        setIsConnecting(false);
-        setError(`Failed to connect to room ${code}. Make sure code is correct.`);
-        cleanupPeerConnection();
+        const isLostConnection = err.type === "disconnected" || 
+                                 err.type === "lost-connection" || 
+                                 (err.message && err.message.toLowerCase().includes("lost connection"));
+        if (isLostConnection) {
+          console.warn("Peer join signaling disconnected. Reconnecting signaling server...");
+          try {
+            peer.reconnect();
+          } catch (e) {
+            console.error("Failed to reconnect signaling:", e);
+          }
+        } else {
+          setIsConnecting(false);
+          setError(`Failed to connect to room ${code}. Make sure code is correct.`);
+          cleanupPeerConnection();
+        }
+      });
+
+      peer.on("disconnected", () => {
+        console.warn("Peer disconnected from signaling server. Reconnecting...");
+        try {
+          peer.reconnect();
+        } catch (e) {
+          console.error("Failed to reconnect signaling:", e);
+        }
       });
 
     } catch (err: any) {
@@ -1415,9 +1462,57 @@ export default function App() {
     }
   };
 
+  const handleAdminForceWin = () => {
+    if (gameMode === "single") {
+      setSinglePlayer((prev: any) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          status: "ended",
+          winner: "player"
+        };
+      });
+    } else if (gameMode === "local") {
+      setLocalState((prev: any) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          status: "ended",
+          winner: prev.turn
+        };
+      });
+    } else if (gameMode === "online" && activeRoom) {
+      const mySecretCode = activeRoom.players.find((p) => p.id === playerId)?.secretCode || localStorage.getItem(`doi_secret_code_${activeRoom.roomId}`) || "1234";
+      
+      setActiveRoom((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          status: "ended",
+          winnerId: playerId,
+          turn: null,
+          updatedAt: Date.now(),
+        };
+      });
+
+      if (connRef.current) {
+        try {
+          connRef.current.send({
+            type: "GAME_OVER",
+            winnerId: playerId,
+            opponentSecret: mySecretCode,
+          });
+        } catch (err) {
+          console.error("Failed to transmit force win:", err);
+        }
+      }
+    }
+  };
+
   const handleOnlineLeave = () => {
     cleanupPeerConnection();
     setActiveRoom(null);
+    setRevealedOpponentSecret(null);
     setGameMode("home");
     setDraftCode("");
     setIsConnecting(false);
@@ -2873,6 +2968,9 @@ export default function App() {
         setError={setError}
         isConsoleHidden={isConsoleHidden}
         onHideToggle={handleHideConsoleToggle}
+        revealedOpponentSecret={revealedOpponentSecret}
+        connRef={connRef}
+        onAdminForceWin={handleAdminForceWin}
       />
 
       {/* DEV SYSTEM PORT TRIGGER */}
