@@ -8,13 +8,19 @@ interface LeaderboardProps {
   onClose: () => void;
   currentPlayerName: string;
   currentPlayerId: string;
+  onTapCurrentUser?: () => void;
 }
 
-export default function Leaderboard({ onClose, currentPlayerName, currentPlayerId }: LeaderboardProps) {
+export default function Leaderboard({ onClose, currentPlayerName, currentPlayerId, onTapCurrentUser }: LeaderboardProps) {
   const [records, setRecords] = useState<LeaderboardRecord[]>(() => getLocalLeaderboard());
   const [activeTab, setActiveTab] = useState<"rankings" | "history">("rankings");
   const [filterMode, setFilterMode] = useState<"all" | "single" | "local" | "online">("all");
   const [selectedPlayerIdFilter, setSelectedPlayerIdFilter] = useState<string>("all");
+
+  const cleanName = (n: string) => {
+    if (!n) return n;
+    return n.trim().toLowerCase() === "daddy-osayuki" ? "daddy" : n;
+  };
 
   const handleClearHistory = () => {
     if (window.confirm("ARE YOU SURE YOU WANT TO DISINTEGRATE ALL MATCH HISTORY? THIS ACTION IS IRREVERSIBLE.")) {
@@ -30,7 +36,7 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
     // Always include the current player profile first
     playersMap.set(currentPlayerId, {
       id: currentPlayerId,
-      name: currentPlayerName,
+      name: cleanName(currentPlayerName),
       lastSeen: Date.now(),
     });
 
@@ -41,7 +47,7 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
         if (!existing || r.timestamp > existing.lastSeen) {
           playersMap.set(r.player1Id, {
             id: r.player1Id,
-            name: r.player1Name,
+            name: cleanName(r.player1Name),
             lastSeen: r.timestamp,
           });
         }
@@ -52,7 +58,7 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
         if (!existing || r.timestamp > existing.lastSeen) {
           playersMap.set(r.player2Id, {
             id: r.player2Id,
-            name: r.player2Name,
+            name: cleanName(r.player2Name),
             lastSeen: r.timestamp,
           });
         }
@@ -333,9 +339,10 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
                     return (
                       <div
                         key={p.id}
+                        onClick={isCurrentUser && onTapCurrentUser ? onTapCurrentUser : undefined}
                         className={`grid grid-cols-12 items-center py-3.5 px-4 text-xs transition-colors ${
                           isCurrentUser
-                            ? "bg-emerald-950/10 border-l-2 border-emerald-500"
+                            ? "bg-emerald-950/10 border-l-2 border-emerald-500 cursor-pointer active:bg-emerald-900/20"
                             : "hover:bg-slate-900/30 border-l-2 border-transparent"
                         }`}
                       >
@@ -533,11 +540,11 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
                           {/* Opponents and secret code status */}
                           <div className="text-slate-200 mt-1">
                             <span className={`font-bold ${isUserP1 || (isLocal && r.player1Name.trim().toLowerCase() === pNameLower) ? "text-emerald-400" : "text-slate-300"}`}>
-                              {r.player1Name}
+                              {cleanName(r.player1Name)}
                             </span>{" "}
                             <span className="text-slate-500">VS</span>{" "}
                             <span className={`font-bold ${isUserP2 || (isLocal && r.player2Name.trim().toLowerCase() === pNameLower) ? "text-emerald-400" : "text-slate-300"}`}>
-                              {r.player2Name}
+                              {cleanName(r.player2Name)}
                             </span>
                           </div>
                         </div>
@@ -554,7 +561,7 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
                                   : "text-slate-500"
                               }`}
                             >
-                              {r.winnerName || (r.winnerId === "ai" ? "CPU ALGORITHM" : "UNKNOWN")}
+                              {r.winnerName ? cleanName(r.winnerName) : (r.winnerId === "ai" ? "CPU ALGORITHM" : "UNKNOWN")}
                             </span>
                           </div>
 

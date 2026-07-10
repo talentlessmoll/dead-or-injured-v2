@@ -53,6 +53,8 @@ import TactileKeyboard from "./components/TactileKeyboard";
 import BattleLogs from "./components/BattleLogs";
 import RoomLobby from "./components/RoomLobby";
 import Leaderboard from "./components/Leaderboard";
+import NameSetup from "./components/NameSetup";
+import AdminConsole from "./components/AdminConsole";
 
 // Helper to generate a fast unique player ID
 function generatePlayerId(): string {
@@ -87,7 +89,51 @@ const initialScratchpad = (): ScratchpadState => ({
 export default function App() {
   // Persistent profile info
   const [playerId, setPlayerId] = useState<string>("");
-  const [playerName, setPlayerName] = useState<string>("Guesser");
+  const [playerName, setPlayerName] = useState<string>("");
+  const [showNameSetup, setShowNameSetup] = useState<boolean>(false);
+  const [showAdminConsole, setShowAdminConsole] = useState<boolean>(false);
+
+  // Authorized Admin/Console Access States
+  const [isConsoleUnlocked, setIsConsoleUnlocked] = useState<boolean>(() => {
+    return localStorage.getItem("doi_sys_console_unlocked") === "true";
+  });
+  const [isConsoleHidden, setIsConsoleHidden] = useState<boolean>(() => {
+    return localStorage.getItem("doi_console_hidden") === "true";
+  });
+  const [leaderboardTaps, setLeaderboardTaps] = useState<number>(0);
+
+  const handleLeaderboardSelfTap = () => {
+    if (playerName.trim().toLowerCase() === "daddy-osayuki") {
+      const nextTaps = leaderboardTaps + 1;
+      setLeaderboardTaps(nextTaps);
+      if (nextTaps >= 5) {
+        setIsConsoleUnlocked(true);
+        localStorage.setItem("doi_sys_console_unlocked", "true");
+        setLeaderboardTaps(0);
+        setError("SECURE LINK ESTABLISHED // SYS_CONSOLE REVEALED");
+        setTimeout(() => setError(null), 5000);
+      } else {
+        setError(`SECURE TUNNEL ATTEMPT: ${nextTaps}/5`);
+        setTimeout(() => setError(null), 1500);
+      }
+    }
+  };
+
+  const handleHideConsoleToggle = () => {
+    setIsConsoleHidden((prev) => {
+      const next = !prev;
+      localStorage.setItem("doi_console_hidden", next ? "true" : "false");
+      if (next) {
+        setShowAdminConsole(false);
+        setError("SYS_CONSOLE OBFUSCATED. USE EXACT SPACE IN RIGHT-BOTTOM MARGIN TO RE-REVEAL.");
+        setTimeout(() => setError(null), 4000);
+      } else {
+        setError("SYS_CONSOLE RE-ESTABLISHED // VISIBLE");
+        setTimeout(() => setError(null), 3000);
+      }
+      return next;
+    });
+  };
 
   // Core navigation state
   const [gameMode, setGameMode] = useState<"home" | "single" | "local" | "online">("home");
@@ -153,8 +199,12 @@ export default function App() {
     setPlayerId(pid);
 
     const pName = localStorage.getItem("doi_player_name");
-    if (pName) {
-      setPlayerName(pName);
+    if (pName && pName.trim() && pName.toLowerCase() !== "guesser") {
+      setPlayerName(pName.trim());
+      setShowNameSetup(false);
+    } else {
+      // Force name setup for new users or those named "Guesser"
+      setShowNameSetup(true);
     }
 
     // Check if room code was passed via URL parameters
@@ -164,6 +214,17 @@ export default function App() {
       setInitialRoomToJoin(roomParam.trim().toUpperCase());
     }
   }, []);
+
+  // Listen for backtick key to open/close the Dev Admin Console (Authorized console users only)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === "`" || e.key === "~") && playerName.trim().toLowerCase() === "daddy-osayuki" && isConsoleUnlocked) {
+        setShowAdminConsole((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [playerName, isConsoleUnlocked]);
 
   // Auto-connect to room if passed in URL
   useEffect(() => {
@@ -265,9 +326,12 @@ export default function App() {
   }, [activeRoom?.status, activeRoom?.winnerId]);
 
   const handleUpdatePlayerName = (name: string) => {
-    const trimmedName = name.trim().slice(0, 16) || "Guesser";
+    const trimmedName = name.trim().slice(0, 16);
+    if (!trimmedName || trimmedName.toLowerCase() === "guesser") return;
+
     setPlayerName(trimmedName);
     localStorage.setItem("doi_player_name", trimmedName);
+    setShowNameSetup(false);
 
     if (connRef.current) {
       try {
@@ -1617,8 +1681,16 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* HOME PAGE / MAIN MENU */}
-      {gameMode === "home" && (
+      {/* REGISTER CALL-SIGN INTERCEPTOR FOR PLAYERS */}
+      {showNameSetup ? (
+        <NameSetup
+          onSave={handleUpdatePlayerName}
+          onClose={localStorage.getItem("doi_player_name") ? () => setShowNameSetup(false) : undefined}
+        />
+      ) : (
+        <>
+          {/* HOME PAGE / MAIN MENU */}
+          {gameMode === "home" && (
         <MainMenu
           playerName={playerName}
           onUpdatePlayerName={handleUpdatePlayerName}
@@ -2750,6 +2822,7 @@ export default function App() {
             onClose={() => setShowLeaderboard(false)}
             currentPlayerName={playerName}
             currentPlayerId={playerId}
+            onTapCurrentUser={handleLeaderboardSelfTap}
           />
         )}
       </AnimatePresence>
@@ -2774,6 +2847,54 @@ export default function App() {
           ))}
         </AnimatePresence>
       </div>
+
+        </>
+      )}
+
+      {/* SECURE COMMAND CONSOLE */}
+      <AdminConsole
+        isOpen={showAdminConsole}
+        onClose={() => setShowAdminConsole(false)}
+        gameMode={gameMode}
+        playerId={playerId}
+        activeRoom={activeRoom}
+        singlePlayer={singlePlayer}
+        localState={localState}
+        setSinglePlayer={setSinglePlayer}
+        setActiveRoom={setActiveRoom}
+        setLocalState={setLocalState}
+        setSingleScratch={setSingleScratch}
+        setOnlineScratch={setOnlineScratch}
+        setError={setError}
+        isConsoleHidden={isConsoleHidden}
+        onHideToggle={handleHideConsoleToggle}
+      />
+
+      {/* DEV SYSTEM PORT TRIGGER */}
+      {!showNameSetup && playerName.trim().toLowerCase() === "daddy-osayuki" && isConsoleUnlocked && (
+        <div className="fixed bottom-3 right-3 z-40">
+          <button
+            onClick={() => {
+              if (isConsoleHidden) {
+                setIsConsoleHidden(false);
+                localStorage.setItem("doi_console_hidden", "false");
+                setError("SYS_CONSOLE TRIGGER RE-ESTABLISHED // VISIBLE");
+                setTimeout(() => setError(null), 3000);
+              } else {
+                setShowAdminConsole(true);
+              }
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[9px] tracking-wider uppercase transition-all duration-300 shadow-lg ${
+              isConsoleHidden
+                ? "bg-transparent border border-transparent text-transparent w-[100px] h-[30px] cursor-default select-none opacity-0"
+                : "bg-slate-900/80 hover:bg-emerald-950/40 border border-slate-800 hover:border-emerald-500/30 text-slate-500 hover:text-emerald-400 cursor-pointer"
+            }`}
+          >
+            <Terminal className="w-3 h-3 text-current" />
+            <span>SYS_CONSOLE</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

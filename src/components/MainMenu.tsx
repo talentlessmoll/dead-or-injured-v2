@@ -22,8 +22,9 @@ export default function MainMenu({
 
   const handleSubmitName = (e: React.FormEvent) => {
     e.preventDefault();
-    if (tempName.trim()) {
-      onUpdatePlayerName(tempName.trim().slice(0, 16));
+    const clean = tempName.trim();
+    if (clean && clean.toLowerCase() !== "guesser") {
+      onUpdatePlayerName(clean.slice(0, 16));
       setIsEditingName(false);
     }
   };
@@ -81,7 +82,7 @@ export default function MainMenu({
                 </form>
               ) : (
                 <h3 className="text-slate-200 font-mono font-medium text-lg leading-tight flex items-center gap-2">
-                  {playerName}
+                  {playerName.toLowerCase() === "daddy-osayuki" ? "daddy" : playerName}
                   <button
                     onClick={() => {
                       setTempName(playerName);
