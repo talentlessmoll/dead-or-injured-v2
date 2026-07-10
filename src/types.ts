@@ -25,9 +25,6 @@ export interface GameRoom {
   isTimed?: boolean;
   timerDuration?: number; // in seconds
   missedTurnsCount?: Record<string, number>;
-  isWifi?: boolean;
-  wifiIp?: string;
-  hostPeerId?: string;
 }
 
 export interface ScratchpadState {
@@ -58,7 +55,7 @@ export interface ChatMessage {
 
 export interface LeaderboardRecord {
   matchId: string;
-  gameMode: "online" | "single" | "local" | "wifi";
+  gameMode: "online" | "single" | "local";
   player1Name: string;
   player1Id: string;
   player2Name: string;

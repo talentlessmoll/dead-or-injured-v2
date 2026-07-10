@@ -13,7 +13,7 @@ interface LeaderboardProps {
 export default function Leaderboard({ onClose, currentPlayerName, currentPlayerId }: LeaderboardProps) {
   const [records, setRecords] = useState<LeaderboardRecord[]>(() => getLocalLeaderboard());
   const [activeTab, setActiveTab] = useState<"rankings" | "history">("rankings");
-  const [filterMode, setFilterMode] = useState<"all" | "single" | "local" | "online" | "wifi">("all");
+  const [filterMode, setFilterMode] = useState<"all" | "single" | "local" | "online">("all");
   const [selectedPlayerIdFilter, setSelectedPlayerIdFilter] = useState<string>("all");
 
   const handleClearHistory = () => {
@@ -417,7 +417,6 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
                   { id: "all", label: "All Modes" },
                   { id: "single", label: "vs AI Practice" },
                   { id: "online", label: "Online Duels" },
-                  { id: "wifi", label: "Local WiFi" },
                   { id: "local", label: "Pass & Play" },
                 ].map((btn) => (
                   <button
@@ -471,7 +470,6 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
                   {filteredRecords.map((r, i) => {
                     const isSingle = r.gameMode === "single";
                     const isOnline = r.gameMode === "online";
-                    const isWifi = r.gameMode === "wifi";
                     const isLocal = r.gameMode === "local";
 
                     // Format Date
@@ -517,12 +515,10 @@ export default function Leaderboard({ onClose, currentPlayerName, currentPlayerI
                                   ? "bg-amber-950/60 border border-amber-800/40 text-amber-400"
                                   : isOnline
                                   ? "bg-emerald-950/60 border border-emerald-800/40 text-emerald-400"
-                                  : isWifi
-                                  ? "bg-cyan-950/60 border border-cyan-800/40 text-cyan-400"
                                   : "bg-blue-950/60 border border-blue-800/40 text-blue-400"
                               }`}
                             >
-                              {isSingle ? "vs AI" : isOnline ? "Online Duel" : isWifi ? "Local WiFi" : "Pass & Play"}
+                              {isSingle ? "vs AI" : isOnline ? "Online Duel" : "Pass & Play"}
                             </span>
                             {isMeshPropagated && (
                               <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-900 border border-slate-800 text-slate-400 flex items-center gap-1">

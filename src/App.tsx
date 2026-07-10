@@ -90,7 +90,7 @@ export default function App() {
   const [playerName, setPlayerName] = useState<string>("Guesser");
 
   // Core navigation state
-  const [gameMode, setGameMode] = useState<"home" | "single" | "local" | "online" | "wifi">("home");
+  const [gameMode, setGameMode] = useState<"home" | "single" | "local" | "online">("home");
   const [showInstructions, setShowInstructions] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,21 +141,6 @@ export default function App() {
     handoffActive: boolean; // True during handover transition to cover screen
   } | null>(null);
 
-  // --- LOCAL WIFI STATE ---
-  const [wifiSsid, setWifiSsid] = useState<string>("Local_TermLink");
-  const [isIpScanning, setIsIpScanning] = useState<boolean>(false);
-  const [wifiIpAddress, setWifiIpAddress] = useState<string>("192.168.1.15");
-  const [wifiScannedLobbies, setWifiScannedLobbies] = useState<{
-    peerId: string;
-    hostName: string;
-    hostId: string;
-    status: string;
-    slotIndex: number;
-    pingMs: number;
-  }[]>([]);
-  const [wifiScanActive, setWifiScanActive] = useState<boolean>(false);
-  const [wifiDiscoverableActive, setWifiDiscoverableActive] = useState<boolean>(false);
-  const [wifiScanProgress, setWifiScanProgress] = useState<number>(0);
   const [initialRoomToJoin, setInitialRoomToJoin] = useState<string | null>(null);
 
   // Initialize Player ID and Name from localStorage
@@ -185,78 +170,10 @@ export default function App() {
     if (initialRoomToJoin && playerId) {
       const code = initialRoomToJoin;
       setInitialRoomToJoin(null); // Clear to prevent loops
-
-      if (code.startsWith("WIFI-")) {
-        setGameMode("wifi");
-        setRoomCodeInput(code);
-        setIsConnecting(true);
-        fetch(`/api/wifi/rooms/${code}`)
-          .then(async (res) => {
-            if (!res.ok) {
-              // Try slot fallback parsing if the server lookup fails
-              const slotMatch = code.match(/^WIFI-([A-Z0-9_]+)-(\d+)$/i);
-              if (slotMatch) {
-                return { hostPeerId: `doi-wifi-${slotMatch[1].toUpperCase()}-${slotMatch[2]}` };
-              }
-              throw new Error("Local WiFi lobby not found. It may have expired or closed.");
-            }
-            return safeParseJson(res);
-          })
-          .then((data) => {
-            setIsConnecting(false);
-            if (data && data.hostPeerId) {
-              handleJoinOnlineRoom(data.hostPeerId);
-            } else {
-              throw new Error("No broadcast details returned by network.");
-            }
-          })
-          .catch((e: any) => {
-            setIsConnecting(false);
-            setError(e.message || "Failed to locate local host beacon. Make sure the host is broadcasting.");
-          });
-      } else {
-        setGameMode("online");
-        setRoomCodeInput(code);
-      }
+      setGameMode("online");
+      setRoomCodeInput(code);
     }
   }, [initialRoomToJoin, playerId]);
-
-  // Fetch IP whenever we enter WiFi mode to auto-group clients on the same public IP
-  useEffect(() => {
-    if (gameMode === "wifi") {
-      setIsIpScanning(true);
-      fetch("/api/ip")
-        .then(async (res) => {
-          if (!res.ok) throw new Error("Could not retrieve network IP");
-          return safeParseJson(res);
-        })
-        .then((data) => {
-          setIsIpScanning(false);
-          if (data && data.ip) {
-            let hash = 0;
-            for (let i = 0; i < data.ip.length; i++) {
-              hash = (hash << 5) - hash + data.ip.charCodeAt(i);
-              hash |= 0;
-            }
-            const numericHash = Math.abs(hash);
-            const cleanIpHash = numericHash.toString(36).substring(0, 5).toUpperCase();
-            setWifiSsid(`WiFi_Node_${cleanIpHash}`);
-            
-            const octets = data.ip.split(".");
-            if (octets.length === 4) {
-              const localLastOctet = (playerId.charCodeAt(2) || 42) % 250 + 2;
-              setWifiIpAddress(`192.168.${(parseInt(octets[2]) || 1) % 255}.${localLastOctet}`);
-            }
-          }
-        })
-        .catch((e) => {
-          console.warn("Public IP fetch failed. Using default network profile.", e);
-          setIsIpScanning(false);
-          const mockOctet = (playerId.charCodeAt(1) || 77) % 250 + 2;
-          setWifiIpAddress(`192.168.1.${mockOctet}`);
-        });
-    }
-  }, [gameMode, playerId]);
 
   const loggedMatchesRef = useRef<Set<string>>(new Set());
 
@@ -414,16 +331,6 @@ export default function App() {
   // --- ONLINE MULTIPLAYER ACTIONS ---
 
   const cleanupPeerConnection = () => {
-    setWifiDiscoverableActive(false);
-
-    if (activeRoom && activeRoom.isWifi && isHost) {
-      fetch("/api/wifi/leave", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomId: activeRoom.roomId }),
-      }).catch((e) => console.warn("Could not notify WiFi leave:", e));
-    }
-
     if (connRef.current) {
       try {
         connRef.current.close();
@@ -1058,365 +965,6 @@ export default function App() {
     }
   };
 
-  const handleStartWifiMode = () => {
-    setGameMode("wifi");
-    setWifiScannedLobbies([]);
-    setWifiScanActive(false);
-    setWifiDiscoverableActive(false);
-    cleanupPeerConnection();
-  };
-
-  const runWifiNetworkScan = async () => {
-    if (wifiScanActive) return;
-    setWifiScanActive(true);
-    setWifiScanProgress(0);
-    setWifiScannedLobbies([]);
-    setError(null);
-
-    try {
-      let mapped: any[] = [];
-      try {
-        const response = await fetch("/api/wifi/lobbies");
-        if (!response.ok) {
-          throw new Error("Failed to scan WiFi networks");
-        }
-        const data = await safeParseJson(response);
-
-        // Scan Sweep progress bar animation
-        const duration = 1200; // 1.2s sweep
-        const startTime = Date.now();
-        await new Promise<void>((resolve) => {
-          const interval = setInterval(() => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(Math.round((elapsed / duration) * 100), 100);
-            setWifiScanProgress(progress);
-            if (progress >= 100) {
-              clearInterval(interval);
-              resolve();
-            }
-          }, 50);
-        });
-
-        mapped = data.map((lobby: any, i: number) => ({
-          peerId: lobby.hostPeerId, // Connecting via PeerJS to this unique ID!
-          hostName: lobby.hostName,
-          hostId: lobby.hostId,
-          status: "waiting",
-          slotIndex: i + 1,
-          pingMs: Math.floor(Math.random() * 20) + 4, // Low LAN-like latency
-        }));
-      } catch (serverErr) {
-        console.warn("Server-side lobbies scan failed, falling back to decentralized PeerJS slot-scanning:", serverErr);
-        
-        // Slot scan fallback
-        const scanner = new Peer();
-        const tempLobbies: any[] = [];
-
-        // Wait for scanner to be ready
-        await new Promise<void>((resolve) => {
-          scanner.on("open", () => resolve());
-          scanner.on("error", () => resolve());
-          setTimeout(() => resolve(), 1500);
-        });
-
-        const cleanSsid = wifiSsid.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-        const MAX_WIFI_SLOTS = 4;
-
-        for (let i = 0; i < MAX_WIFI_SLOTS; i++) {
-          setWifiScanProgress(Math.round((i / MAX_WIFI_SLOTS) * 100));
-          const slotId = `doi-wifi-${cleanSsid}-${i}`;
-          
-          const startTime = Date.now();
-          const result = await new Promise<any>((resolve) => {
-            let conn: any = null;
-            const timeout = setTimeout(() => {
-              if (conn) conn.close();
-              resolve(null);
-            }, 1000);
-
-            try {
-              conn = scanner.connect(slotId);
-              
-              conn.on("open", () => {
-                conn.send({
-                  type: "WIFI_PING",
-                  playerId,
-                  playerName: playerName.trim().slice(0, 16),
-                });
-              });
-
-              conn.on("data", (data: any) => {
-                if (data && data.type === "WIFI_PONG") {
-                  clearTimeout(timeout);
-                  const pingMs = Date.now() - startTime;
-                  conn.close();
-                  resolve({
-                    peerId: slotId,
-                    hostName: data.hostName,
-                    hostId: data.hostId,
-                    status: data.status,
-                    slotIndex: i + 1,
-                    pingMs,
-                  });
-                }
-              });
-
-              conn.on("error", () => {
-                clearTimeout(timeout);
-                resolve(null);
-              });
-            } catch (err) {
-              clearTimeout(timeout);
-              resolve(null);
-            }
-          });
-
-          if (result) {
-            tempLobbies.push(result);
-            setWifiScannedLobbies([...tempLobbies]);
-          }
-        }
-
-        setWifiScanProgress(100);
-        try {
-          scanner.destroy();
-        } catch (err) {}
-        return;
-      }
-
-      setWifiScannedLobbies(mapped);
-    } catch (e: any) {
-      console.error("Local network scan error:", e);
-      setError(e.message || "Could not scan local network. Check connection.");
-    } finally {
-      setWifiScanActive(false);
-    }
-  };
-
-  const handleHostWifiLobby = async () => {
-    if (wifiDiscoverableActive) {
-      setWifiDiscoverableActive(false);
-      if (activeRoom) {
-        try {
-          await fetch("/api/wifi/leave", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ roomId: activeRoom.roomId }),
-          });
-        } catch (e) {
-          console.warn("WiFi leave report fail:", e);
-        }
-      }
-      cleanupPeerConnection();
-      return;
-    }
-
-    try {
-      setError(null);
-      setIsConnecting(true);
-      cleanupPeerConnection();
-
-      // Create a case-sensitive, unique Peer ID using player ID and random suffix to prevent collisions
-      const hostPeerId = `doi-wifi-${playerId}-${Math.random().toString(36).substring(2, 6)}`;
-      const boundPeer = new Peer(hostPeerId);
-
-      // Wait for Peer to register on the public PeerJS server
-      await new Promise<void>((resolve, reject) => {
-        boundPeer.on("open", () => resolve());
-        boundPeer.on("error", (err) => reject(err));
-        setTimeout(() => reject(new Error("Connecting to PeerJS broker timed out")), 5000);
-      });
-
-      // Register this lobby with our lightweight discoverability coordinator
-      const cleanSsid = wifiSsid.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-      let registeredRoom: GameRoom | null = null;
-      let usingServerFallback = false;
-
-      try {
-        const response = await fetch("/api/wifi/host", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            playerId,
-            name: playerName.trim().slice(0, 16),
-            hostPeerId,
-            wifiSsid: cleanSsid,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error("Server hosting endpoint failed");
-        }
-        registeredRoom = await safeParseJson<GameRoom>(response);
-      } catch (err) {
-        console.warn("Server-side coordinator unavailable, falling back to client-side PeerJS slot allocation:", err);
-        usingServerFallback = true;
-      }
-
-      if (usingServerFallback) {
-        // Destroy our temporary boundPeer with the random suffix
-        try {
-          boundPeer.destroy();
-        } catch (e) {}
-
-        // Look for a free slot among 0..3 using slot IDs: doi-wifi-${cleanSsid}-${i}
-        let finalBoundPeer: Peer | null = null;
-        let boundSlotIndex = -1;
-        const MAX_WIFI_SLOTS = 4;
-
-        for (let i = 0; i < MAX_WIFI_SLOTS; i++) {
-          const slotId = `doi-wifi-${cleanSsid}-${i}`;
-          const isFree = await new Promise<boolean>((resolve) => {
-            const testPeer = new Peer(slotId);
-            testPeer.on("open", () => {
-              finalBoundPeer = testPeer;
-              boundSlotIndex = i;
-              resolve(true);
-            });
-            testPeer.on("error", () => {
-              testPeer.destroy();
-              resolve(false);
-            });
-            setTimeout(() => {
-              testPeer.destroy();
-              resolve(false);
-            }, 1200);
-          });
-
-          if (isFree) {
-            break;
-          }
-        }
-
-        if (!finalBoundPeer) {
-          setIsConnecting(false);
-          setError("All local slots are occupied. Try a different SSID name.");
-          return;
-        }
-
-        peerRef.current = finalBoundPeer;
-        setIsHost(true);
-        setWifiDiscoverableActive(true);
-        setIsConnecting(false);
-
-        const fallbackRoom: GameRoom = {
-          roomId: `WIFI-${cleanSsid}-${boundSlotIndex}`,
-          players: [{ id: playerId, name: playerName.trim().slice(0, 16), secretCode: null }],
-          guesses: [],
-          status: "waiting",
-          turn: null,
-          winnerId: null,
-          updatedAt: Date.now(),
-          isWifi: true,
-        };
-
-        setActiveRoom(fallbackRoom);
-        setDraftCode("");
-        setOnlineScratch(initialScratchpad());
-
-        (finalBoundPeer as Peer).on("connection", (conn) => {
-          connRef.current = conn;
-          setupConnectionListeners(conn, true, fallbackRoom.roomId);
-
-          conn.on("open", () => {
-            conn.send({
-              type: "SYNC",
-              room: {
-                ...fallbackRoom,
-                players: [
-                  ...fallbackRoom.players,
-                  { id: "GUEST_STUB", name: "Connecting guest...", secretCode: null }
-                ]
-              }
-            });
-          });
-
-          conn.on("data", (data: any) => {
-            if (data && data.type === "WIFI_PING") {
-              try {
-                conn.send({
-                  type: "WIFI_PONG",
-                  hostName: playerName.trim().slice(0, 16),
-                  hostId: playerId,
-                  status: "waiting",
-                });
-              } catch (e) {}
-              return;
-            }
-            handleIncomingData(data, true, fallbackRoom.roomId, conn);
-          });
-        });
-
-        (finalBoundPeer as Peer).on("error", (err: any) => {
-          console.error("WiFi Host PeerJS error:", err);
-          setError(`Channel interference: ${err.message || err.type}`);
-          setWifiDiscoverableActive(false);
-          cleanupPeerConnection();
-        });
-
-        return;
-      }
-
-      // If registered successfully via backend coordinator
-      if (registeredRoom) {
-        peerRef.current = boundPeer;
-        setIsHost(true);
-        setWifiDiscoverableActive(true);
-        setIsConnecting(false);
-
-        setActiveRoom(registeredRoom);
-        setDraftCode("");
-        setOnlineScratch(initialScratchpad());
-
-        boundPeer.on("connection", (conn) => {
-          connRef.current = conn;
-          setupConnectionListeners(conn, true, registeredRoom!.roomId);
-
-          conn.on("open", () => {
-            conn.send({
-              type: "SYNC",
-              room: {
-                ...registeredRoom!,
-                players: [
-                  ...registeredRoom!.players,
-                  { id: "GUEST_STUB", name: "Connecting guest...", secretCode: null }
-                ]
-              }
-            });
-          });
-
-          conn.on("data", (data: any) => {
-            if (data && data.type === "WIFI_PING") {
-              try {
-                conn.send({
-                  type: "WIFI_PONG",
-                  hostName: playerName.trim().slice(0, 16),
-                  hostId: playerId,
-                  status: "waiting",
-                });
-              } catch (e) {}
-              return;
-            }
-            handleIncomingData(data, true, registeredRoom!.roomId, conn);
-          });
-        });
-
-        boundPeer.on("error", (err: any) => {
-          console.error("WiFi Host PeerJS error:", err);
-          setError(`Channel interference: ${err.message || err.type}`);
-          setWifiDiscoverableActive(false);
-          cleanupPeerConnection();
-        });
-      }
-
-    } catch (e: any) {
-      setIsConnecting(false);
-      setWifiDiscoverableActive(false);
-      setError(e.message || "Failed to start broadcast beacon.");
-      cleanupPeerConnection();
-    }
-  };
-
   const handleCreateOnlineRoom = () => {
     try {
       setError(null);
@@ -1477,54 +1025,6 @@ export default function App() {
   };
 
   const handleJoinOnlineRoom = (codeOverride?: string) => {
-    // If we have a direct PeerJS override for WiFi, bypass normal URL extraction and sanitization
-    if (codeOverride && codeOverride.startsWith("doi-wifi-")) {
-      try {
-        setError(null);
-        setIsConnecting(true);
-        cleanupPeerConnection();
-
-        const peer = new Peer();
-        peerRef.current = peer;
-        setIsHost(false);
-
-        peer.on("open", () => {
-          const conn = peer.connect(codeOverride);
-          connRef.current = conn;
-          setupConnectionListeners(conn, false, codeOverride);
-
-          setActiveRoom({
-            roomId: "LOCAL WIFI",
-            players: [
-              { id: "HOST_STUB", name: "Awaiting Coordinates...", secretCode: null },
-              { id: playerId, name: playerName.trim().slice(0, 16), secretCode: null }
-            ],
-            guesses: [],
-            status: "waiting",
-            turn: null,
-            winnerId: null,
-            updatedAt: Date.now(),
-            isWifi: true,
-          });
-          setOnlineScratch(initialScratchpad());
-          setDraftCode("");
-        });
-
-        peer.on("error", (err: any) => {
-          console.error("Peer join error:", err);
-          setIsConnecting(false);
-          setError("Failed to connect to local WiFi terminal.");
-          cleanupPeerConnection();
-        });
-        
-        return;
-      } catch (err: any) {
-        setIsConnecting(false);
-        setError(err.message);
-        return;
-      }
-    }
-
     const rawCode = (codeOverride || roomCodeInput).trim().toUpperCase();
     if (!rawCode) {
       setError("Please enter a room code");
@@ -1551,57 +1051,12 @@ export default function App() {
           code = roomParam.toUpperCase();
         }
       } catch (e) {
-        // Fallback: search for room code pattern in URL (allow hyphen for WIFI rooms)
+        // Fallback: search for room code pattern in URL
         const match = rawCode.match(/ROOM=([A-Z0-9\-]+)/);
         if (match && match[1]) {
           code = match[1];
         }
       }
-    }
-
-    // Support both WIFI- prefixed codes and raw codes if currently in wifi mode
-    const isWiFiModeInput = code.startsWith("WIFI-") || (gameMode === "wifi" && code.length >= 3);
-
-    if (isWiFiModeInput) {
-      const fullWifiCode = code.startsWith("WIFI-") ? code : `WIFI-${code}`;
-      setIsConnecting(true);
-      setError(null);
-      fetch(`/api/wifi/rooms/${fullWifiCode}`)
-        .then(async (res) => {
-          if (!res.ok) {
-            // Check if it is a slot-based decentralized fallback format
-            const slotMatch = fullWifiCode.match(/^WIFI-([A-Z0-9_]+)-(\d+)$/i);
-            if (slotMatch) {
-              return { hostPeerId: `doi-wifi-${slotMatch[1].toUpperCase()}-${slotMatch[2]}` };
-            }
-            throw new Error("Local WiFi lobby not found. It may have expired or closed.");
-          }
-          return safeParseJson(res);
-        })
-        .then((data) => {
-          setIsConnecting(false);
-          if (data && data.hostPeerId) {
-            setGameMode("wifi");
-            handleJoinOnlineRoom(data.hostPeerId);
-          } else {
-            throw new Error("No broadcast details returned by network.");
-          }
-        })
-        .catch((e: any) => {
-          // If the user typed a 4-letter code in WiFi mode but it wasn't found as a WiFi room,
-          // maybe they meant to join a standard online room? Let's check!
-          const stripped = code.replace(/[^A-Z0-9]/g, "");
-          if (stripped.length === 4 && !code.startsWith("WIFI-")) {
-            setIsConnecting(false);
-            setGameMode("online");
-            setRoomCodeInput(stripped);
-            setTimeout(() => handleJoinOnlineRoom(stripped), 50);
-          } else {
-            setIsConnecting(false);
-            setError(e.message || "Failed to locate local host beacon.");
-          }
-        });
-      return;
     }
 
     // Remove any non-alphanumeric characters for standard online matches
@@ -1623,16 +1078,14 @@ export default function App() {
       setIsHost(false);
 
       peer.on("open", () => {
-        // Attempt to connect to the host (support both short room codes and full WiFi Peer IDs)
         const targetId = code.startsWith("doi-") ? code : `doi-${code}`;
         const conn = peer.connect(targetId);
         connRef.current = conn;
         setupConnectionListeners(conn, false, code);
 
         // Pre-create local waiting room representation
-        const displayRoomId = code.startsWith("doi-wifi-") ? "LOCAL WIFI" : code;
         setActiveRoom({
-          roomId: displayRoomId,
+          roomId: code,
           players: [
             { id: "HOST_STUB", name: "Awaiting Coordinates...", secretCode: null },
             { id: playerId, name: playerName.trim().slice(0, 16), secretCode: null }
@@ -1845,7 +1298,7 @@ export default function App() {
     }, 2500);
 
     // Send to peer if online
-    if ((gameMode === "online" || gameMode === "wifi") && connRef.current) {
+    if (gameMode === "online" && connRef.current) {
       try {
         connRef.current.send({
           type: "TAUNT",
@@ -2172,236 +1625,11 @@ export default function App() {
           onSelectMode={(mode) => {
             if (mode === "single") handleStartSinglePlayer();
             else if (mode === "local") handleStartLocalMatch();
-            else if (mode === "wifi") handleStartWifiMode();
             else setGameMode("online");
           }}
           onShowInstructions={() => setShowInstructions(true)}
           onShowLeaderboard={() => setShowLeaderboard(true)}
         />
-      )}
-
-      {/* LOCAL WIFI SCANNER PANEL */}
-      {gameMode === "wifi" && !activeRoom && (
-        <div className="flex flex-col items-center justify-center p-3 sm:p-4 min-h-[85vh] w-full max-w-4xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="w-full bg-slate-900/60 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl backdrop-blur-md"
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between mb-6 pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <ArrowLeft
-                  className="w-5 h-5 text-slate-400 hover:text-slate-100 cursor-pointer"
-                  onClick={() => {
-                    cleanupPeerConnection();
-                    setGameMode("home");
-                  }}
-                />
-                <h2 className="text-sm sm:text-md font-mono font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-2">
-                  <Wifi className="w-4 h-4 animate-pulse text-cyan-400" />
-                  Local WiFi Subnet Scanner
-                </h2>
-              </div>
-              <div className="text-[10px] font-mono text-slate-500 uppercase tracking-widest bg-slate-950 px-2.5 py-1 rounded border border-slate-800">
-                LAN MULTIPLAYER
-              </div>
-            </div>
-
-            {/* Network Info Strip */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-950/60 border border-slate-800/60 rounded-xl p-4 mb-6 text-xs font-mono">
-              <div className="space-y-1">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider">NETWORK SSID (SUBNET KEY)</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={wifiSsid}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/[^a-zA-Z0-9_-]/g, "");
-                      setWifiSsid(val);
-                    }}
-                    disabled={wifiScanActive || wifiDiscoverableActive}
-                    className="bg-slate-900 border border-slate-800 text-cyan-400 font-bold px-2 py-1 rounded w-full max-w-[200px] text-xs focus:outline-none focus:border-cyan-500/50 uppercase disabled:opacity-50"
-                  />
-                  <span className="text-[9px] text-slate-500 uppercase" title="Match this exact string on both devices to play over WiFi">
-                    [CO-OP COORDINATES]
-                  </span>
-                </div>
-              </div>
-              <div className="space-y-1 flex flex-col justify-center">
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider">YOUR LOCAL TERMINAL IP</span>
-                <div className="flex items-center gap-2 text-slate-300">
-                  <span className="text-emerald-400 font-bold">● ONLINE</span>
-                  <span className="text-slate-500">|</span>
-                  <span>{wifiIpAddress}</span>
-                  {isIpScanning && <span className="text-[9px] text-slate-500 animate-pulse">(locating subnet...)</span>}
-                </div>
-              </div>
-            </div>
-
-            {/* Main Action Hub */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-              {/* RADAR SWEEP (Search for games) */}
-              <div className="col-span-12 md:col-span-6 bg-slate-950/30 border border-slate-800/80 rounded-xl p-4 flex flex-col min-h-[350px]">
-                <div className="flex items-center justify-between mb-4 border-b border-slate-800/60 pb-2">
-                  <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <Target className="w-3.5 h-3.5 text-cyan-400" />
-                    Radar Sweep
-                  </h3>
-                  <span className="text-[9px] font-mono text-slate-500 uppercase bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
-                    GUEST TERMINAL
-                  </span>
-                </div>
-
-                {/* Radar Visual / Action Button */}
-                <div className="flex-1 flex flex-col items-center justify-center py-4 relative">
-                  {wifiScanActive ? (
-                    <div className="flex flex-col items-center justify-center text-center space-y-4">
-                      {/* Radar sweep animation */}
-                      <div className="w-28 h-28 rounded-full border border-cyan-500/20 relative flex items-center justify-center overflow-hidden">
-                        <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/0 via-cyan-500/0 to-cyan-500/10 animate-[spin_3s_linear_infinite]" />
-                        <div className="w-16 h-16 rounded-full border border-cyan-500/15" />
-                        <div className="w-6 h-6 rounded-full border border-cyan-500/10 bg-cyan-950/30" />
-                        <div className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping absolute" />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="font-mono text-xs font-bold text-cyan-400 animate-pulse uppercase">
-                          SWEEPING SUBNET SLOTS...
-                        </p>
-                        <p className="font-mono text-[9px] text-slate-500 uppercase">
-                          Channel Sweep Progress: {wifiScanProgress}%
-                        </p>
-                      </div>
-                    </div>
-                  ) : wifiScannedLobbies.length > 0 ? (
-                    <div className="w-full space-y-3 max-h-[220px] overflow-y-auto pr-1">
-                      {wifiScannedLobbies.map((lobby) => (
-                        <div
-                          key={lobby.peerId}
-                          className="flex items-center justify-between bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 hover:border-cyan-500/30 transition-all font-mono"
-                        >
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-cyan-400 text-xs font-bold">{lobby.hostName}</span>
-                              <span className="text-[8px] bg-cyan-950/60 border border-cyan-800/40 text-cyan-400 px-1 py-0.2 rounded uppercase">
-                                SLOT {lobby.slotIndex}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 text-[9px] text-slate-500">
-                              <span>PING: <span className="text-emerald-400 font-bold">{lobby.pingMs}ms</span></span>
-                              <span>•</span>
-                              <span className="uppercase text-cyan-500/80">Lobby {lobby.status}</span>
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => {
-                              setRoomCodeInput(lobby.peerId);
-                              handleJoinOnlineRoom(lobby.peerId);
-                            }}
-                            className="px-2.5 py-1.5 bg-cyan-950/60 hover:bg-cyan-500 text-cyan-400 hover:text-slate-950 border border-cyan-500/30 hover:border-cyan-500 rounded-lg text-[10px] font-bold uppercase transition-all cursor-pointer"
-                          >
-                            CONNECT
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center text-center space-y-3">
-                      <div className="p-3 bg-slate-900 border border-slate-800 rounded-full text-slate-600">
-                        <Target className="w-6 h-6" />
-                      </div>
-                      <p className="font-mono text-xs text-slate-500 uppercase max-w-[200px] leading-relaxed text-center">
-                        No active broadcast terminals found on this network yet.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Scan Trigger */}
-                <button
-                  onClick={runWifiNetworkScan}
-                  disabled={wifiScanActive || wifiDiscoverableActive}
-                  className="w-full h-11 bg-cyan-950/20 hover:bg-cyan-500 text-cyan-400 hover:text-slate-950 border border-cyan-500/30 hover:border-cyan-500 rounded-xl font-mono text-xs font-bold tracking-widest uppercase transition-all duration-300 flex items-center justify-center gap-2 disabled:opacity-40 disabled:hover:bg-cyan-950/20 disabled:hover:text-cyan-400 disabled:border-cyan-500/30 cursor-pointer"
-                >
-                  <Wifi className="w-4 h-4" />
-                  {wifiScanActive ? "SWEEPING CHANNELS..." : "SWEEP NETWORK"}
-                </button>
-              </div>
-
-              {/* BECOME DISCOVERABLE (Broadcast Terminal Beacon) */}
-              <div className="col-span-12 md:col-span-6 bg-slate-950/30 border border-slate-800/80 rounded-xl p-4 flex flex-col min-h-[350px]">
-                <div className="flex items-center justify-between mb-4 border-b border-slate-800/60 pb-2">
-                  <h3 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-emerald-400" />
-                    Terminal Broadcast
-                  </h3>
-                  <span className="text-[9px] font-mono text-slate-500 uppercase bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">
-                    HOST TERMINAL
-                  </span>
-                </div>
-
-                {/* Pulse Visual / Awaiting Joined Connection */}
-                <div className="flex-1 flex flex-col items-center justify-center py-4 relative">
-                  {wifiDiscoverableActive ? (
-                    <div className="flex flex-col items-center justify-center text-center space-y-4">
-                      {/* Pulse Animation */}
-                      <div className="w-24 h-24 rounded-full border border-emerald-500/20 relative flex items-center justify-center">
-                        <div className="absolute inset-0 bg-emerald-500/5 rounded-full animate-ping" />
-                        <div className="absolute inset-2 bg-emerald-500/10 rounded-full animate-pulse" />
-                        <Wifi className="w-8 h-8 text-emerald-400" />
-                      </div>
-                      <div className="space-y-1">
-                        <p className="font-mono text-xs font-bold text-emerald-400 uppercase">
-                          BEACON SIGNAL ACTIVE
-                        </p>
-                        <p className="font-mono text-[9px] text-slate-500 uppercase max-w-[200px] leading-relaxed text-center">
-                          Awaiting guest terminals on SSID: <span className="text-cyan-400 font-bold block">{wifiSsid.toUpperCase()}</span>
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center text-center space-y-3">
-                      <div className="p-3 bg-slate-900 border border-slate-800 rounded-full text-slate-600">
-                        <Wifi className="w-6 h-6" />
-                      </div>
-                      <p className="font-mono text-xs text-slate-500 uppercase max-w-[200px] leading-relaxed text-center">
-                        Become discoverable to nearby terminals on the same local Wi-Fi.
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {/* Broadcast Trigger */}
-                <button
-                  onClick={handleHostWifiLobby}
-                  disabled={wifiScanActive || isConnecting}
-                  className={`w-full h-11 rounded-xl font-mono text-xs font-bold tracking-widest uppercase transition-all duration-300 flex items-center justify-center gap-2 cursor-pointer ${
-                    wifiDiscoverableActive
-                      ? "bg-rose-950/20 hover:bg-rose-600 text-rose-400 hover:text-slate-950 border border-rose-500/30 hover:border-rose-500"
-                      : "bg-emerald-950/20 hover:bg-emerald-500 text-emerald-400 hover:text-slate-950 border border-emerald-500/30 hover:border-emerald-500"
-                  }`}
-                >
-                  {isConnecting ? (
-                    <>
-                      <div className="w-3.5 h-3.5 rounded-full border-2 border-t-transparent border-emerald-400 animate-spin" />
-                      <span>TUNING FREQUENCY...</span>
-                    </>
-                  ) : wifiDiscoverableActive ? (
-                    <>
-                      <X className="w-4 h-4" />
-                      <span>TERMINATE BEACON</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4" />
-                      <span>BROADCAST BEACON</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        </div>
       )}
 
       {/* ONLINE LOBBY / MULTIPLAYER CONNECTIONS */}
@@ -2549,7 +1777,7 @@ export default function App() {
       )}
 
       {/* ONLINE ROOM WAITING LOBBY */}
-      {(gameMode === "online" || gameMode === "wifi") && activeRoom && activeRoom.status === "waiting" && (
+      {gameMode === "online" && activeRoom && activeRoom.status === "waiting" && (
         <RoomLobby
           room={activeRoom}
           playerId={playerId}
@@ -2559,7 +1787,7 @@ export default function App() {
       )}
 
       {/* ONLINE MATCHMAKING ACTIVE BATTLE & SETUP */}
-      {(gameMode === "online" || gameMode === "wifi") && activeRoom && activeRoom.status !== "waiting" && (
+      {gameMode === "online" && activeRoom && activeRoom.status !== "waiting" && (
         <div className="flex-1 max-w-6xl w-full mx-auto p-4 flex flex-col md:grid md:grid-cols-12 gap-5 min-h-[90vh]">
           {/* Top Info Bar (Takes full width in mobile, grid in desktop) */}
           <div className="col-span-12 flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-slate-900/40 border border-slate-900 rounded-xl gap-3">

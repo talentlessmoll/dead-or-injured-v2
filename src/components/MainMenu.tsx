@@ -1,11 +1,11 @@
 import React, { useState } from "react";
 import { motion } from "motion/react";
-import { Target, Users, Bot, Smartphone, HelpCircle, Terminal, User, Trophy, Wifi } from "lucide-react";
+import { Target, Users, Bot, Smartphone, HelpCircle, Terminal, User, Trophy } from "lucide-react";
 
 interface MainMenuProps {
   playerName: string;
   onUpdatePlayerName: (name: string) => void;
-  onSelectMode: (mode: "online" | "single" | "local" | "wifi") => void;
+  onSelectMode: (mode: "online" | "single" | "local") => void;
   onShowInstructions: () => void;
   onShowLeaderboard: () => void;
 }
@@ -142,34 +142,6 @@ export default function MainMenu({
           </div>
           <div className="absolute top-3 right-3 text-[10px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded tracking-widest">
             REALTIME
-          </div>
-        </motion.button>
-
-        {/* LOCAL WIFI MULTIPLAYER */}
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.35 }}
-          onClick={() => onSelectMode("wifi")}
-          className="group relative flex items-center justify-between p-5 bg-slate-900 border border-slate-800 hover:border-cyan-500/40 hover:bg-slate-900/80 rounded-xl text-left transition-all duration-300 shadow-lg shadow-slate-950/50 cursor-pointer"
-        >
-          <div className="flex items-start gap-4">
-            <div className="p-3 bg-cyan-950/60 border border-cyan-500/30 rounded-lg text-cyan-400 group-hover:bg-cyan-500 group-hover:text-slate-950 transition-all duration-300">
-              <Wifi className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-lg font-display font-bold text-slate-100 group-hover:text-cyan-400 transition-colors">
-                LOCAL WIFI
-              </h3>
-              <p className="text-xs text-slate-400 mt-1 mr-4">
-                Scan your local network to discover and play against nearby terminals instantly.
-              </p>
-            </div>
-          </div>
-          <div className="absolute top-3 right-3 text-[10px] font-mono text-cyan-400 bg-cyan-950/60 border border-cyan-800/40 px-2 py-0.5 rounded tracking-widest">
-            LAN SCAN
           </div>
         </motion.button>
 
