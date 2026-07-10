@@ -62,9 +62,15 @@ function generatePlayerId(): string {
 // Robust JSON decoder to avoid crash on non-JSON HTML/empty responses
 async function safeParseJson<T = any>(response: Response): Promise<T> {
   const text = await response.text();
+  if (!text || !text.trim()) {
+    return {} as T;
+  }
   try {
     return JSON.parse(text) as T;
   } catch (e) {
+    if (text.trim().startsWith("<")) {
+      throw new Error(`Server returned HTML instead of JSON (Status ${response.status}).`);
+    }
     throw new Error(`Invalid server response (Status ${response.status}).`);
   }
 }

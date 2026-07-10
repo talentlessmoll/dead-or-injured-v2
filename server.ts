@@ -25,8 +25,15 @@ function calculateScore(guess: string, secret: string) {
   return { dead, injured };
 }
 
-function normalizeIp(ip: string): string {
-  let cleaned = ip.trim();
+function normalizeIp(ip: any): string {
+  if (!ip) return "127.0.0.1";
+  let cleaned = "";
+  if (Array.isArray(ip)) {
+    cleaned = String(ip[0]);
+  } else {
+    cleaned = String(ip);
+  }
+  cleaned = cleaned.trim();
   if (cleaned.includes(",")) {
     cleaned = cleaned.split(",")[0].trim();
   }
@@ -460,6 +467,11 @@ async function startServer() {
     };
 
     res.json(sanitizedRoom);
+  });
+
+  // Fallback API handler to prevent unmatched API requests from serving HTML index
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.url}` });
   });
 
   // --- Vite & Client integration ---
